@@ -126,7 +126,8 @@ class RLAgentNode(Node):
                 raise ValueError('SB3 PPO mode requires model_path to point to a Stable-Baselines3 .zip model.')
 
             from stable_baselines3 import PPO as SB3PPO
-            self.agent = SB3PPO.load(self.model_path)
+            custom_objects = self._make_sb3_custom_objects()
+            self.agent = SB3PPO.load(self.model_path, custom_objects=custom_objects)
             self.actions = None
             self.get_logger().info(f'Loaded Stable-Baselines3 PPO model from {self.model_path}')
         else:
@@ -139,6 +140,29 @@ class RLAgentNode(Node):
                 self.get_logger().info(f'Loaded model from {self.model_path}')
             except Exception as e:
                 self.get_logger().error(f'Failed to load model: {e}')
+
+    def _make_sb3_custom_objects(self):
+        """Provide spaces explicitly when old SB3 pickles cannot deserialize them."""
+        try:
+            from gymnasium import spaces
+        except ImportError:
+            from gym import spaces
+
+        observation_space = spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(self.state_dim,),
+            dtype=np.float32
+        )
+        action_space = spaces.Box(
+            low=np.array([-0.4, 0.0], dtype=np.float32),
+            high=np.array([0.4, 3.0], dtype=np.float32),
+            dtype=np.float32
+        )
+        return {
+            'observation_space': observation_space,
+            'action_space': action_space,
+        }
     
     def _build_discrete_actions(self):
         """Create the steering/velocity grid used by DQN."""
