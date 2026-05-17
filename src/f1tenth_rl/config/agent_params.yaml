@@ -2,11 +2,12 @@ rl_agent:
   ros__parameters:
     # Training parameters
     training_mode: true       # Set to false for deployment/testing
-    model_type: 'dqn'         # Options: 'dqn', 'ppo' (when implemented)
+    model_type: 'dqn'         # Options: 'dqn', 'ppo'
     model_path: ''            # Path to saved model (empty for training from scratch)
     save_path: 'models/'      # Directory to save trained models
     
     # Environment parameters
+    state_dim: 1080           # Expected LaserScan input size for the network
     max_steps_per_episode: 1000
     
     # DQN parameters
@@ -16,7 +17,7 @@ rl_agent:
     gamma: 0.98              # Discount factor
     epsilon_start: 1.0       # Starting exploration rate
     epsilon_end: 0.05        # Minimum exploration rate
-    epsilon_decay: 0.99     # Decay rate for exploration
+    epsilon_decay: 0.99      # Decay rate for exploration
     
     # Reward components weights
     collision_penalty: -500.0
