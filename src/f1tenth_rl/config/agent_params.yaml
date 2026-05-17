@@ -1,13 +1,13 @@
 rl_agent:
   ros__parameters:
     # Training parameters
-    training_mode: true       # Set to false for deployment/testing
-    model_type: 'dqn'         # Options: 'dqn', 'ppo', 'sb3_ppo'
-    model_path: ''            # Path to saved model (empty for training from scratch)
+    training_mode: false      # Set to false for deployment/testing
+    model_type: 'sb3_ppo'    # Options: 'dqn', 'ppo', 'sb3_ppo'
+    model_path: '/home/meric/f1tenth_ws_rl/src/f1tenth_rl/best_model.zip'
     save_path: 'models/'      # Directory to save trained models
     
     # Environment parameters
-    state_dim: 1080           # Expected LaserScan input size for the network
+    state_dim: 2156           # Must match the SB3 PPO observation size
     max_steps_per_episode: 1000
     
     # DQN/custom PPO parameters
