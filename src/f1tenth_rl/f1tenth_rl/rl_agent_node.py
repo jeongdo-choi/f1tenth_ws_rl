@@ -38,7 +38,7 @@ class RLAgentNode(Node):
         
         # Get parameters
         self.training_mode = self.get_parameter('training_mode').value
-        self.model_type = self.get_parameter('model_type').value.lower()
+        self.model_type = self.get_parameter('model_type').value.lower().replace('-', '_')
         self.model_path = self.get_parameter('model_path').value
         self.save_path = self.get_parameter('save_path').value
         self.state_dim = int(self.get_parameter('state_dim').value)
@@ -118,12 +118,22 @@ class RLAgentNode(Node):
                 lr=self.learning_rate
             )
             self.actions = None
-            self.get_logger().info('Initialized PPO agent with continuous actions')
+            self.get_logger().info('Initialized custom PPO agent with continuous actions')
+        elif self.model_type in ('sb3_ppo', 'stable_baselines3_ppo'):
+            if self.training_mode:
+                raise ValueError('SB3 PPO mode is for deployment only. Launch with training_mode:=false.')
+            if not self.model_path:
+                raise ValueError('SB3 PPO mode requires model_path to point to a Stable-Baselines3 .zip model.')
+
+            from stable_baselines3 import PPO as SB3PPO
+            self.agent = SB3PPO.load(self.model_path)
+            self.actions = None
+            self.get_logger().info(f'Loaded Stable-Baselines3 PPO model from {self.model_path}')
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
         
-        # Load model if provided
-        if self.model_path:
+        # Load custom PyTorch checkpoints if provided.
+        if self.model_path and self.model_type not in ('sb3_ppo', 'stable_baselines3_ppo'):
             try:
                 self.agent.load(self.model_path)
                 self.get_logger().info(f'Loaded model from {self.model_path}')
@@ -187,6 +197,13 @@ class RLAgentNode(Node):
             steering, velocity = self.actions[action_idx]
             return steering, velocity, {'action_idx': action_idx}
 
+        if self.model_type in ('sb3_ppo', 'stable_baselines3_ppo'):
+            action, _ = self.agent.predict(state, deterministic=True)
+            action = np.asarray(action).reshape(-1)
+            if action.size < 2:
+                raise ValueError(f'SB3 PPO action must contain steering and velocity, got shape {action.shape}')
+            return action[0], action[1], {}
+
         deterministic = not self.training_mode
         action, log_prob, value = self.agent.select_action(state, deterministic=deterministic)
         steering, velocity = action
@@ -198,7 +215,9 @@ class RLAgentNode(Node):
     
     def training_loop(self):
         """Main RL training/inference loop"""
-        if self.latest_scan is None or self.latest_odom is None:
+        if self.latest_scan is None:
+            return
+        if self.training_mode and self.latest_odom is None:
             return
         
         current_state = self.get_state()
