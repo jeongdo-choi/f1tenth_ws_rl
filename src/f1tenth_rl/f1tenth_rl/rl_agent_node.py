@@ -125,6 +125,14 @@ class RLAgentNode(Node):
             if not self.model_path:
                 raise ValueError('SB3 PPO mode requires model_path to point to a Stable-Baselines3 .zip model.')
 
+            inferred_state_dim = self._infer_sb3_state_dim(self.model_path)
+            if inferred_state_dim is not None and inferred_state_dim != self.state_dim:
+                self.get_logger().warn(
+                    f'Overriding state_dim from {self.state_dim} to {inferred_state_dim} '
+                    'to match the SB3 PPO checkpoint.'
+                )
+                self.state_dim = inferred_state_dim
+
             from stable_baselines3 import PPO as SB3PPO
             custom_objects = self._make_sb3_custom_objects()
             self.agent = SB3PPO.load(self.model_path, custom_objects=custom_objects)
@@ -140,6 +148,35 @@ class RLAgentNode(Node):
                 self.get_logger().info(f'Loaded model from {self.model_path}')
             except Exception as e:
                 self.get_logger().error(f'Failed to load model: {e}')
+
+    def _infer_sb3_state_dim(self, model_path):
+        """Infer the flat observation size from a Stable-Baselines3 .zip policy."""
+        import io
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(model_path, 'r') as model_zip:
+                policy_bytes = model_zip.read('policy.pth')
+        except Exception as e:
+            self.get_logger().warn(f'Could not inspect SB3 policy.pth: {e}')
+            return None
+
+        try:
+            policy_state = torch.load(io.BytesIO(policy_bytes), map_location='cpu')
+        except Exception as e:
+            self.get_logger().warn(f'Could not load SB3 policy state for inspection: {e}')
+            return None
+
+        for key, value in policy_state.items():
+            if key.endswith('mlp_extractor.policy_net.0.weight') and len(value.shape) == 2:
+                return int(value.shape[1])
+
+        for key, value in policy_state.items():
+            if key.endswith('features_extractor.flatten.weight') and len(value.shape) >= 2:
+                return int(value.shape[1])
+
+        self.get_logger().warn('Could not infer SB3 observation size from policy weights.')
+        return None
 
     def _make_sb3_custom_objects(self):
         """Provide spaces explicitly when old SB3 pickles cannot deserialize them."""
