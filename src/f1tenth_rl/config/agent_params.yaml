@@ -7,7 +7,7 @@ rl_agent:
     save_path: 'models/'      # Directory to save trained models
     
     # Environment parameters
-    state_dim: 2156           # Must match the SB3 PPO observation size
+    state_dim: 1080           # Expected LaserScan input size for the network
     max_steps_per_episode: 1000
     
     # DQN/custom PPO parameters
