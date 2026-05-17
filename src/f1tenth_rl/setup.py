@@ -26,6 +26,7 @@ setup(
         'torch',
         'gym',
         'matplotlib',
+        'stable-baselines3',
     ],
     zip_safe=True,
     maintainer='Your Name',
