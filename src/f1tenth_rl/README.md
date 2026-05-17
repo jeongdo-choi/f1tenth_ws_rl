@@ -58,6 +58,7 @@ ros2 launch f1tenth_rl rl_agent_launch.py \
 
 The SB3 model is expected to output a two-value continuous action: `[steering_angle, velocity]`.
 The node clips steering to `[-0.4, 0.4]` radians and speed to `[0.0, 2.0]` m/s before publishing `/drive`.
+The `state_dim` parameter must match the model's observation size. The included `best_model.zip` expects `state_dim: 2156`.
 
 ## Configuration
 
