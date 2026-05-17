@@ -11,6 +11,7 @@ This package provides a framework for implementing reinforcement learning agents
 - DQN (Deep Q-Network) implementation
 - Customizable reward functions
 - Tools for training and evaluation
+- Deployment support for Stable-Baselines3 PPO `.zip` models
 
 ## Installation
 See setup.md
@@ -45,11 +46,25 @@ source install/local_setup.bash
 ros2 launch f1tenth_rl rl_agent_launch.py training_mode:=false model_path:=/path/to/your/model.pt
 ```
 
+For a Stable-Baselines3 PPO `.zip` model, use `model_type:=sb3_ppo`:
+```bash
+source /opt/ros/foxy/setup.bash
+source install/local_setup.bash
+ros2 launch f1tenth_rl rl_agent_launch.py \
+  training_mode:=false \
+  model_type:=sb3_ppo \
+  model_path:=/path/to/best_model.zip
+```
+
+The SB3 model is expected to output a two-value continuous action: `[steering_angle, velocity]`.
+The node clips steering to `[-0.4, 0.4]` radians and speed to `[0.0, 2.0]` m/s before publishing `/drive`.
+
 ## Configuration
 
 You can modify the parameters in `config/agent_params.yaml` to adjust:
 - Training hyperparameters (learning rate, batch size, etc.)
 - Reward function components and weights
+- `state_dim`, which must match the observation size used when the model was trained
 
 ## Implementation Details
 
@@ -89,8 +104,8 @@ The `utils/rewards.py` file defines the reward function components:
 
 ### Adding New RL Algorithms
 
-To implement a new RL algorithm (e.g., PPO):
-1. Create a new file in the `models/` directory (e.g., `ppo.py`)
+To implement a new RL algorithm:
+1. Create a new file in the `models/` directory
 2. Implement the agent class with appropriate methods
 3. Update the `rl_agent_node.py` to support the new algorithm
 4. Update the parameter file with relevant hyperparameters
