@@ -16,7 +16,11 @@ rl_agent:
     sb3_scan_beams: 2155      # rldd PPO training used 2155 lidar beams
     sb3_lidar_max_range: 10.0 # rldd normalized clipped lidar ranges by 10m
     sb3_speed_scale: 3.2      # rldd linear_vel feature was speed / 3.2
-    sb3_default_pose_d: 0.0   # Used for 2160-dim models until Frenet projection is available
+    sb3_default_pose_d: 0.0   # Fallback when no centerline CSV is configured
+    sb3_centerline_csv: '/home/meric/f1tenth_ws_rl/src/pure_pursuit/racelines/e7_floor5.csv'
+    sb3_centerline_x_col: 0   # e7_floor5.csv format: x,y,yaw
+    sb3_centerline_y_col: 1
+    sb3_centerline_yaw_col: 2
     sb3_action_steering_limit: 0.4189
     sb3_action_min_speed: 0.5
     sb3_action_max_speed: 4.0
