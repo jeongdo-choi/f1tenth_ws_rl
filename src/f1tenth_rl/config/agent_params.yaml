@@ -7,8 +7,20 @@ rl_agent:
     save_path: 'models/'      # Directory to save trained models
     
     # Environment parameters
-    state_dim: 1080           # Expected LaserScan input size for the network
+    state_dim: 1080           # Auto-overridden to match SB3 checkpoints when needed
     max_steps_per_episode: 1000
+
+    # Real-car SB3 deployment parameters
+    speed_odom_topic: '/odom' # Odometry topic used for the speed feature
+    sb3_scan_beams: 2155      # rldd PPO training used 2155 lidar beams
+    sb3_lidar_max_range: 10.0 # rldd normalized clipped lidar ranges by 10m
+    sb3_speed_scale: 3.2      # rldd linear_vel feature was speed / 3.2
+    sb3_action_steering_limit: 0.4189
+    sb3_action_min_speed: 0.5
+    sb3_action_max_speed: 4.0
+    drive_steering_limit: 0.4
+    drive_min_speed: 0.0
+    drive_max_speed: 1.0      # Keep low for first real-car tests
     
     # DQN/custom PPO parameters
     hidden_dim: 256
