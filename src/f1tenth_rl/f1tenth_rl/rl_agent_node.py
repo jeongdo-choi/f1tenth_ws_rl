@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
-from nav_msgs.msg import Odometry
-from ackermann_msgs.msg import AckermannDriveStamped
-import numpy as np
-import torch
+import json
 import os
 from datetime import datetime
+
+import numpy as np
+import rclpy
+import torch
+from ackermann_msgs.msg import AckermannDriveStamped
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from sensor_msgs.msg import LaserScan
+
 from f1tenth_rl.environment import F1TenthEnv
 from f1tenth_rl.models.dqn import DQNAgent
 from f1tenth_rl.models.ppo import PPOAgent
@@ -43,9 +46,11 @@ class RLAgentNode(Node):
         self.declare_parameter('drive_steering_limit', 0.4)
         self.declare_parameter('drive_min_speed', 0.0)
         self.declare_parameter('drive_max_speed', 1.0)
+        self.declare_parameter('sb3_observation_layout', 'auto')
         self.declare_parameter('sb3_scan_beams', 2155)
         self.declare_parameter('sb3_lidar_max_range', 10.0)
         self.declare_parameter('sb3_speed_scale', 3.2)
+        self.declare_parameter('sb3_default_pose_d', 0.0)
         self.declare_parameter('sb3_action_steering_limit', 0.4189)
         self.declare_parameter('sb3_action_min_speed', 0.5)
         self.declare_parameter('sb3_action_max_speed', 4.0)
@@ -68,12 +73,16 @@ class RLAgentNode(Node):
         self.drive_steering_limit = float(self.get_parameter('drive_steering_limit').value)
         self.drive_min_speed = float(self.get_parameter('drive_min_speed').value)
         self.drive_max_speed = float(self.get_parameter('drive_max_speed').value)
+        self.sb3_observation_layout = self.get_parameter('sb3_observation_layout').value
         self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
         self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
         self.sb3_speed_scale = float(self.get_parameter('sb3_speed_scale').value)
+        self.sb3_default_pose_d = float(self.get_parameter('sb3_default_pose_d').value)
         self.sb3_action_steering_limit = float(self.get_parameter('sb3_action_steering_limit').value)
         self.sb3_action_min_speed = float(self.get_parameter('sb3_action_min_speed').value)
         self.sb3_action_max_speed = float(self.get_parameter('sb3_action_max_speed').value)
+        self.sb3_action_low = np.array([-1.0, -1.0], dtype=np.float32)
+        self.sb3_action_high = np.array([1.0, 1.0], dtype=np.float32)
         
         # Create directories if they don't exist
         os.makedirs(self.save_path, exist_ok=True)
@@ -83,8 +92,13 @@ class RLAgentNode(Node):
         self.latest_odom = None
         self.prev_odom = None
         self.latest_speed = 0.0
+        self.latest_linear_vel_s = 0.0
+        self.latest_ang_vel_z = 0.0
+        self.latest_yaw = 0.0
+        self.latest_pose_d = self.sb3_default_pose_d
         self.has_speed_odom = False
         self.warned_missing_speed = False
+        self.warned_frenet_approximation = False
         
         # Publishers and subscribers
         self.drive_pub = self.create_publisher(
@@ -155,7 +169,8 @@ class RLAgentNode(Node):
             if not self.model_path:
                 raise ValueError('SB3 PPO mode requires model_path to point to a Stable-Baselines3 .zip model.')
 
-            inferred_state_dim = self._infer_sb3_state_dim(self.model_path)
+            metadata = self._inspect_sb3_metadata(self.model_path)
+            inferred_state_dim = metadata.get('state_dim') or self._infer_sb3_state_dim(self.model_path)
             if inferred_state_dim is not None and inferred_state_dim != self.state_dim:
                 self.get_logger().warn(
                     f'Overriding state_dim from {self.state_dim} to {inferred_state_dim} '
@@ -163,11 +178,21 @@ class RLAgentNode(Node):
                 )
                 self.state_dim = inferred_state_dim
 
+            if metadata.get('action_low') is not None and metadata.get('action_high') is not None:
+                self.sb3_action_low = metadata['action_low']
+                self.sb3_action_high = metadata['action_high']
+
             from stable_baselines3 import PPO as SB3PPO
             custom_objects = self._make_sb3_custom_objects()
             self.agent = SB3PPO.load(self.model_path, custom_objects=custom_objects)
             self.actions = None
             self.get_logger().info(f'Loaded Stable-Baselines3 PPO model from {self.model_path}')
+            self.get_logger().info(
+                f'SB3 observation_dim={self.state_dim}, '
+                f'action_low={self.sb3_action_low.tolist()}, '
+                f'action_high={self.sb3_action_high.tolist()}, '
+                f'observation_layout={self._resolve_sb3_observation_layout()}'
+            )
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
         
@@ -178,6 +203,47 @@ class RLAgentNode(Node):
                 self.get_logger().info(f'Loaded model from {self.model_path}')
             except Exception as e:
                 self.get_logger().error(f'Failed to load model: {e}')
+
+    def _inspect_sb3_metadata(self, model_path):
+        """Read lightweight SB3 metadata from the zip without unpickling objects."""
+        import zipfile
+
+        metadata = {'state_dim': None, 'action_low': None, 'action_high': None}
+        try:
+            with zipfile.ZipFile(model_path, 'r') as model_zip:
+                data = json.loads(model_zip.read('data').decode('utf-8'))
+        except Exception as e:
+            self.get_logger().warn(f'Could not inspect SB3 data metadata: {e}')
+            return metadata
+
+        observation_space = data.get('observation_space', {})
+        shape = observation_space.get('shape')
+        if isinstance(shape, list) and shape:
+            metadata['state_dim'] = int(np.prod(shape))
+
+        action_space = data.get('action_space', {})
+        action_low = self._parse_space_vector(action_space.get('low'), expected_size=2)
+        action_high = self._parse_space_vector(action_space.get('high'), expected_size=2)
+        if action_low is not None and action_high is not None:
+            metadata['action_low'] = action_low
+            metadata['action_high'] = action_high
+
+        return metadata
+
+    def _parse_space_vector(self, value, expected_size):
+        if value is None:
+            return None
+
+        if isinstance(value, list):
+            parsed = np.asarray(value, dtype=np.float32)
+        else:
+            cleaned = str(value).replace('[', ' ').replace(']', ' ').replace(',', ' ')
+            parsed = np.fromstring(cleaned, sep=' ', dtype=np.float32)
+
+        if parsed.size != expected_size or not np.all(np.isfinite(parsed)):
+            return None
+
+        return parsed.astype(np.float32)
 
     def _infer_sb3_state_dim(self, model_path):
         """Infer the flat observation size from a Stable-Baselines3 .zip policy."""
@@ -216,14 +282,14 @@ class RLAgentNode(Node):
             from gym import spaces
 
         observation_space = spaces.Box(
-            low=0.0,
-            high=1.0,
+            low=-np.inf,
+            high=np.inf,
             shape=(self.state_dim,),
             dtype=np.float32
         )
         action_space = spaces.Box(
-            low=np.array([-1.0, -1.0], dtype=np.float32),
-            high=np.array([1.0, 1.0], dtype=np.float32),
+            low=self.sb3_action_low.astype(np.float32),
+            high=self.sb3_action_high.astype(np.float32),
             dtype=np.float32
         )
         return {
@@ -247,11 +313,23 @@ class RLAgentNode(Node):
         """Store the latest odometry data"""
         self.prev_odom = self.latest_odom
         self.latest_odom = msg
-
+    
     def speed_odom_callback(self, msg):
-        """Store speed for SB3 sim-to-real observations."""
+        """Store speed and simple motion features for SB3 sim-to-real observations."""
         self.latest_speed = float(msg.twist.twist.linear.x)
+        self.latest_linear_vel_s = self.latest_speed
+        self.latest_ang_vel_z = float(msg.twist.twist.angular.z)
+        self.latest_yaw = self._yaw_from_quaternion(msg.pose.pose.orientation)
         self.has_speed_odom = True
+
+    def _yaw_from_quaternion(self, quaternion):
+        x = quaternion.x
+        y = quaternion.y
+        z = quaternion.z
+        w = quaternion.w
+        siny_cosp = 2.0 * (w * z + x * y)
+        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+        return float(np.arctan2(siny_cosp, cosy_cosp))
     
     def get_state(self):
         """Convert laser scan to a fixed-size state vector for the RL agent"""
@@ -296,18 +374,49 @@ class RLAgentNode(Node):
 
     def _get_sb3_state(self):
         scan_state = self._get_scan_state(self.sb3_scan_beams)
+        layout = self._resolve_sb3_observation_layout()
+
+        if layout == 'rldd_frenet_scan':
+            return self._get_sb3_frenet_scan_state(scan_state)
+
         speed_feature = self._get_speed_feature()
-
-        if self.state_dim == self.sb3_scan_beams:
-            return scan_state
-
         state = np.concatenate(
             [scan_state, np.array([speed_feature], dtype=np.float32)]
         )
+        return self._match_state_dim(state)
 
+    def _resolve_sb3_observation_layout(self):
+        layout = str(self.sb3_observation_layout).lower().strip()
+        if layout != 'auto':
+            return layout
+
+        if self.state_dim == self.sb3_scan_beams + 5:
+            return 'rldd_frenet_scan'
+
+        return 'scan_speed'
+
+    def _get_sb3_frenet_scan_state(self, scan_state):
+        if not self.warned_frenet_approximation:
+            self.get_logger().warn(
+                'Using approximate rldd 2160 observation layout. '
+                'poses_d defaults to sb3_default_pose_d because no raceline Frenet projection is available.'
+            )
+            self.warned_frenet_approximation = True
+
+        features = np.array([
+            self.latest_ang_vel_z,
+            self._get_speed_feature(),
+            self.latest_linear_vel_s,
+            self.latest_pose_d,
+            self.latest_yaw,
+        ], dtype=np.float32)
+        return self._match_state_dim(np.concatenate([features, scan_state]))
+
+    def _match_state_dim(self, state):
         if len(state) > self.state_dim:
-            state = state[:self.state_dim]
-        elif len(state) < self.state_dim:
+            return state[:self.state_dim].astype(np.float32)
+
+        if len(state) < self.state_dim:
             state = np.pad(
                 state,
                 (0, self.state_dim - len(state)),
@@ -370,9 +479,22 @@ class RLAgentNode(Node):
         }
 
     def _convert_sb3_action(self, action):
-        steering_norm = float(np.clip(action[0], -1.0, 1.0))
-        speed_norm = float(np.clip(action[1], -1.0, 1.0))
-        speed_ratio = (speed_norm + 1.0) * 0.5
+        steering_low = float(self.sb3_action_low[0])
+        steering_high = float(self.sb3_action_high[0])
+        speed_low = float(self.sb3_action_low[1])
+        speed_high = float(self.sb3_action_high[1])
+
+        steering_norm = float(np.clip(action[0], steering_low, steering_high))
+        speed_norm = float(np.clip(action[1], speed_low, speed_high))
+
+        if steering_high != steering_low:
+            steering_ratio = (steering_norm - steering_low) / (steering_high - steering_low)
+            steering_norm = steering_ratio * 2.0 - 1.0
+
+        if speed_high == speed_low:
+            speed_ratio = 0.0
+        else:
+            speed_ratio = (speed_norm - speed_low) / (speed_high - speed_low)
 
         steering = steering_norm * self.sb3_action_steering_limit
         velocity = self.sb3_action_min_speed + speed_ratio * (
