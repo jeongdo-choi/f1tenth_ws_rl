@@ -14,6 +14,10 @@ from f1tenth_rl.models.dqn import DQNAgent
 from f1tenth_rl.models.ppo import PPOAgent
 from f1tenth_rl.utils.rewards import calculate_reward
 
+
+SB3_MODEL_TYPES = ('sb3_ppo', 'stable_baselines3_ppo')
+
+
 class RLAgentNode(Node):
     def __init__(self):
         super().__init__('rl_agent_node')
@@ -35,6 +39,16 @@ class RLAgentNode(Node):
         self.declare_parameter('start_x', 0.0)
         self.declare_parameter('start_y', 0.0)
         self.declare_parameter('start_yaw', 0.0)
+        self.declare_parameter('speed_odom_topic', '/odom')
+        self.declare_parameter('drive_steering_limit', 0.4)
+        self.declare_parameter('drive_min_speed', 0.0)
+        self.declare_parameter('drive_max_speed', 1.0)
+        self.declare_parameter('sb3_scan_beams', 2155)
+        self.declare_parameter('sb3_lidar_max_range', 10.0)
+        self.declare_parameter('sb3_speed_scale', 3.2)
+        self.declare_parameter('sb3_action_steering_limit', 0.4189)
+        self.declare_parameter('sb3_action_min_speed', 0.5)
+        self.declare_parameter('sb3_action_max_speed', 4.0)
         
         # Get parameters
         self.training_mode = self.get_parameter('training_mode').value
@@ -50,9 +64,27 @@ class RLAgentNode(Node):
         self.epsilon_start = float(self.get_parameter('epsilon_start').value)
         self.epsilon_end = float(self.get_parameter('epsilon_end').value)
         self.epsilon_decay = float(self.get_parameter('epsilon_decay').value)
+        self.speed_odom_topic = self.get_parameter('speed_odom_topic').value
+        self.drive_steering_limit = float(self.get_parameter('drive_steering_limit').value)
+        self.drive_min_speed = float(self.get_parameter('drive_min_speed').value)
+        self.drive_max_speed = float(self.get_parameter('drive_max_speed').value)
+        self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
+        self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
+        self.sb3_speed_scale = float(self.get_parameter('sb3_speed_scale').value)
+        self.sb3_action_steering_limit = float(self.get_parameter('sb3_action_steering_limit').value)
+        self.sb3_action_min_speed = float(self.get_parameter('sb3_action_min_speed').value)
+        self.sb3_action_max_speed = float(self.get_parameter('sb3_action_max_speed').value)
         
         # Create directories if they don't exist
         os.makedirs(self.save_path, exist_ok=True)
+        
+        # Store the latest observations
+        self.latest_scan = None
+        self.latest_odom = None
+        self.prev_odom = None
+        self.latest_speed = 0.0
+        self.has_speed_odom = False
+        self.warned_missing_speed = False
         
         # Publishers and subscribers
         self.drive_pub = self.create_publisher(
@@ -63,11 +95,9 @@ class RLAgentNode(Node):
         
         self.odom_sub = self.create_subscription(
             Odometry, '/pf/pose/odom', self.odom_callback, 10)
-        
-        # Store the latest observations
-        self.latest_scan = None
-        self.latest_odom = None
-        self.prev_odom = None
+
+        self.speed_odom_sub = self.create_subscription(
+            Odometry, self.speed_odom_topic, self.speed_odom_callback, 10)
         
         # Initialize environment with reference to this node
         self.env = F1TenthEnv(node=self)
@@ -119,7 +149,7 @@ class RLAgentNode(Node):
             )
             self.actions = None
             self.get_logger().info('Initialized custom PPO agent with continuous actions')
-        elif self.model_type in ('sb3_ppo', 'stable_baselines3_ppo'):
+        elif self.model_type in SB3_MODEL_TYPES:
             if self.training_mode:
                 raise ValueError('SB3 PPO mode is for deployment only. Launch with training_mode:=false.')
             if not self.model_path:
@@ -142,7 +172,7 @@ class RLAgentNode(Node):
             raise ValueError(f"Unsupported model_type: {self.model_type}")
         
         # Load custom PyTorch checkpoints if provided.
-        if self.model_path and self.model_type not in ('sb3_ppo', 'stable_baselines3_ppo'):
+        if self.model_path and self.model_type not in SB3_MODEL_TYPES:
             try:
                 self.agent.load(self.model_path)
                 self.get_logger().info(f'Loaded model from {self.model_path}')
@@ -192,8 +222,8 @@ class RLAgentNode(Node):
             dtype=np.float32
         )
         action_space = spaces.Box(
-            low=np.array([-0.4, 0.0], dtype=np.float32),
-            high=np.array([0.4, 3.0], dtype=np.float32),
+            low=np.array([-1.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
         return {
@@ -217,33 +247,97 @@ class RLAgentNode(Node):
         """Store the latest odometry data"""
         self.prev_odom = self.latest_odom
         self.latest_odom = msg
+
+    def speed_odom_callback(self, msg):
+        """Store speed for SB3 sim-to-real observations."""
+        self.latest_speed = float(msg.twist.twist.linear.x)
+        self.has_speed_odom = True
     
     def get_state(self):
         """Convert laser scan to a fixed-size state vector for the RL agent"""
         if self.latest_scan is None:
             return None
-            
-        ranges = np.asarray(self.latest_scan.ranges, dtype=np.float32)
-        ranges = np.nan_to_num(ranges, nan=10.0, posinf=10.0, neginf=0.0)
-        normalized_ranges = np.clip(ranges / 10.0, 0.0, 1.0)
 
-        if len(normalized_ranges) > self.state_dim:
-            normalized_ranges = normalized_ranges[:self.state_dim]
-        elif len(normalized_ranges) < self.state_dim:
-            normalized_ranges = np.pad(
-                normalized_ranges,
-                (0, self.state_dim - len(normalized_ranges)),
+        if self.model_type in SB3_MODEL_TYPES:
+            return self._get_sb3_state()
+
+        return self._get_scan_state(self.state_dim)
+
+    def _get_scan_state(self, target_size):
+        ranges = np.asarray(self.latest_scan.ranges, dtype=np.float32)
+        ranges = np.nan_to_num(
+            ranges,
+            nan=self.sb3_lidar_max_range,
+            posinf=self.sb3_lidar_max_range,
+            neginf=0.0
+        )
+        ranges = np.clip(ranges, 0.0, self.sb3_lidar_max_range)
+        normalized_ranges = ranges / self.sb3_lidar_max_range
+
+        if len(normalized_ranges) == target_size:
+            return normalized_ranges.astype(np.float32)
+
+        if len(normalized_ranges) == 0:
+            return np.ones(target_size, dtype=np.float32)
+
+        source_angles = np.linspace(
+            self.latest_scan.angle_min,
+            self.latest_scan.angle_max,
+            len(normalized_ranges),
+            dtype=np.float32
+        )
+        target_angles = np.linspace(
+            self.latest_scan.angle_min,
+            self.latest_scan.angle_max,
+            target_size,
+            dtype=np.float32
+        )
+        return np.interp(target_angles, source_angles, normalized_ranges).astype(np.float32)
+
+    def _get_sb3_state(self):
+        scan_state = self._get_scan_state(self.sb3_scan_beams)
+        speed_feature = self._get_speed_feature()
+
+        if self.state_dim == self.sb3_scan_beams:
+            return scan_state
+
+        state = np.concatenate(
+            [scan_state, np.array([speed_feature], dtype=np.float32)]
+        )
+
+        if len(state) > self.state_dim:
+            state = state[:self.state_dim]
+        elif len(state) < self.state_dim:
+            state = np.pad(
+                state,
+                (0, self.state_dim - len(state)),
                 mode='constant',
                 constant_values=1.0
             )
-        
-        return normalized_ranges
+
+        return state.astype(np.float32)
+
+    def _get_speed_feature(self):
+        if not self.has_speed_odom and not self.warned_missing_speed:
+            self.get_logger().warn(
+                f'No odometry received on {self.speed_odom_topic}; using speed feature 0.0.'
+            )
+            self.warned_missing_speed = True
+
+        if self.sb3_speed_scale <= 0.0:
+            return 0.0
+
+        return float(np.clip(self.latest_speed / self.sb3_speed_scale, 0.0, 1.0))
     
     def publish_drive_command(self, steering, velocity):
         """Publish drive command to the car"""
         msg = AckermannDriveStamped()
-        msg.drive.steering_angle = float(np.clip(steering, -0.4, 0.4))
-        msg.drive.speed = float(np.clip(velocity, 0.0, 2.0))
+        msg.drive.steering_angle = float(
+            np.clip(steering, -self.drive_steering_limit, self.drive_steering_limit)
+        )
+        msg.drive.speed = float(
+            np.clip(velocity, self.drive_min_speed, self.drive_max_speed)
+        )
         self.drive_pub.publish(msg)
 
     def select_action(self, state):
@@ -258,12 +352,13 @@ class RLAgentNode(Node):
             steering, velocity = self.actions[action_idx]
             return steering, velocity, {'action_idx': action_idx}
 
-        if self.model_type in ('sb3_ppo', 'stable_baselines3_ppo'):
+        if self.model_type in SB3_MODEL_TYPES:
             action, _ = self.agent.predict(state, deterministic=True)
-            action = np.asarray(action).reshape(-1)
+            action = np.asarray(action, dtype=np.float32).reshape(-1)
             if action.size < 2:
                 raise ValueError(f'SB3 PPO action must contain steering and velocity, got shape {action.shape}')
-            return action[0], action[1], {}
+            steering, velocity = self._convert_sb3_action(action)
+            return steering, velocity, {'raw_action': action}
 
         deterministic = not self.training_mode
         action, log_prob, value = self.agent.select_action(state, deterministic=deterministic)
@@ -273,6 +368,17 @@ class RLAgentNode(Node):
             'log_prob': log_prob,
             'value': value,
         }
+
+    def _convert_sb3_action(self, action):
+        steering_norm = float(np.clip(action[0], -1.0, 1.0))
+        speed_norm = float(np.clip(action[1], 0.0, 1.0))
+
+        steering = steering_norm * self.sb3_action_steering_limit
+        velocity = self.sb3_action_min_speed + speed_norm * (
+            self.sb3_action_max_speed - self.sb3_action_min_speed
+        )
+        velocity = float(np.clip(velocity, self.drive_min_speed, self.drive_max_speed))
+        return steering, velocity
     
     def training_loop(self):
         """Main RL training/inference loop"""
@@ -378,6 +484,7 @@ def main(args=None):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
