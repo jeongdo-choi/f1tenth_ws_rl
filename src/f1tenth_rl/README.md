@@ -58,9 +58,11 @@ ros2 launch f1tenth_rl rl_agent_launch.py \
 
 The SB3 real-car deployment path mirrors the `rldd` training wrappers:
 - LaserScan ranges are clipped to `sb3_lidar_max_range`, normalized to `[0, 1]`, and resampled to `sb3_scan_beams` beams.
-- The speed feature is read from `speed_odom_topic`, divided by `sb3_speed_scale`, clipped to `[0, 1]`, and appended after the scan.
-- For the common `rldd` model shape, the observation is `[2155 lidar beams, speed / 3.2]` for a total of 2156 values.
-- SB3 actions are treated as normalized actions in `[-1, 1]` for both steering and speed. Steering is scaled directly, while speed is shifted to `[0, 1]` before mapping back to vehicle speed.
+- The node reads the saved SB3 observation size and action range from the `.zip` metadata when possible.
+- 2156-dim models use `[2155 lidar beams, speed / 3.2]`.
+- 2160-dim models use `[ang_vels_z, speed / 3.2, linear_vels_s, poses_d, poses_theta, 2155 lidar beams]`.
+- For 2160-dim real-car deployment, `linear_vels_s` is approximated from odometry speed and `poses_d` defaults to `sb3_default_pose_d` until a raceline Frenet projection is available.
+- SB3 actions are mapped from the saved model action range, such as `[-1, -1]..[1, 1]` or `[-1, 0]..[1, 1]`, back to Ackermann steering/speed before publishing `/drive`.
 - `drive_max_speed` limits the final command for real-car safety. Keep it low for initial tests.
 
 ## Configuration
@@ -69,7 +71,7 @@ You can modify the parameters in `config/agent_params.yaml` to adjust:
 - Training hyperparameters (learning rate, batch size, etc.)
 - Reward function components and weights
 - `state_dim`, which is auto-overridden for SB3 checkpoints when the checkpoint input size can be inspected
-- SB3 sim-to-real parameters such as `sb3_scan_beams`, `sb3_speed_scale`, and `drive_max_speed`
+- SB3 sim-to-real parameters such as `sb3_observation_layout`, `sb3_scan_beams`, `sb3_speed_scale`, and `drive_max_speed`
 
 ## Implementation Details
 
