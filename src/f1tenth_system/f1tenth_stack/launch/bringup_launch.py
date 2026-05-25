@@ -21,14 +21,12 @@
 # SOFTWARE.
 
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from launch.substitutions import Command
-from launch.substitutions import LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
-from launch.actions import IncludeLaunchDescription
-from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
+
 
 def generate_launch_description():
     joy_teleop_config = os.path.join(
@@ -72,27 +70,23 @@ def generate_launch_description():
     ld = LaunchDescription([joy_la, vesc_la, sensors_la, mux_la])
 
     joy_node = Node(
-    package='joy',
-    executable='joy_node',
-    name='joy'
-)
+        package='joy',
+        executable='joy_node',
+        name='joy'
+    )
 
     simple_teleop_node = Node(
-    package='simple_teleop',
-    executable='simple_teleop',
-    name='simple_teleop'
-)
+        package='simple_teleop',
+        executable='simple_teleop',
+        name='simple_teleop'
+    )
 
-# joy_teleop_node를 주석 처리하여 비활성화합니다.
-# joy_teleop_node = Node(...)
-
-# joy_teleop_node 노드를 주석 처리하여 비활성화합니다.
     joy_teleop_node = Node(
         package='joy_teleop',
         executable='joy_teleop',
         name='joy_teleop',
         parameters=[LaunchConfiguration('joy_config')]
- )
+    )
     ackermann_to_vesc_node = Node(
         package='vesc_ackermann',
         executable='ackermann_to_vesc_node',
@@ -117,28 +111,13 @@ def generate_launch_description():
         name='throttle_interpolator',
         parameters=[LaunchConfiguration('vesc_config')]
     )
-#    urg_node = Node(
-#        package='urg_node',
-#        executable='urg_node_driver',
-#       name='urg_node',
-#        parameters=[LaunchConfiguration('sensors_config')]
-#    )
-    # 변경 (RPLIDAR S3)  
-    rplidar_node = Node(  
-        package='rplidar_ros',  
-        executable='rplidar_composition',  
-        name='rplidar_node',  
-        parameters=[{  
-            'serial_port': '/dev/ttyUSB0',  # 포트 확인 필요  
-            'frame_id': 'laser',  
-            'angle_compensate': True,  
-            'scan_mode': 'Standard'  # S3는 여러 스캔 모드 지원  
-        }],  
-        output='screen'  
+    urg_node = Node(
+        package='urg_node',
+        executable='urg_node_driver',
+        name='urg_node',
+        parameters=[LaunchConfiguration('sensors_config')],
+        output='screen'
     )
-
-
-
 
     ackermann_mux_node = Node(
         package='ackermann_mux',
@@ -149,35 +128,26 @@ def generate_launch_description():
     )
     static_tf_node = Node(
         package='tf2_ros',
-        executable='static_transform_publisher',        
+        executable='static_transform_publisher',
         name='static_baselink_to_laser',
         arguments=['0.29', '0.0', '0.1', '3.10699', '0.0', '0.0', 'base_link', 'laser']
     )
-    
     static_imu_tf_node = Node(
-  	package='tf2_ros',
-  	executable='static_transform_publisher',
-  	name='static_baselink_to_imu',
-  	arguments=['0.075', '0.0', '0.0719','1.5708', '0.0', '0.0', 'base_link', 'imu_link']
-    )    
-    #imu_tf_node = Node(
-    #    package='f1tenth_stack',
-    #    executable='imu_tf_broadcaster',
-    #    name='imu_tf_broadcaster',
-    #    output='screen'
-    #)  
-    
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_baselink_to_imu',
+        arguments=['0.075', '0.0', '0.0719', '1.5708', '0.0', '0.0', 'base_link', 'imu_link']
+    )
 
     # finalize
     ld.add_action(joy_node)
-    ld.add_action(simple_teleop_node) 
-    ld.add_action(joy_teleop_node)  
+    ld.add_action(simple_teleop_node)
+    ld.add_action(joy_teleop_node)
     ld.add_action(ackermann_to_vesc_node)
     ld.add_action(vesc_to_odom_node)
     ld.add_action(vesc_driver_node)
     # ld.add_action(throttle_interpolator_node)
-#    ld.add_action(urg_node)
-    ld.add_action(rplidar_node)
+    ld.add_action(urg_node)
     ld.add_action(ackermann_mux_node)
     ld.add_action(static_tf_node)
     ld.add_action(static_imu_tf_node)
