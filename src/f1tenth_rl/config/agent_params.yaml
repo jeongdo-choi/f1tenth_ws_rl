@@ -11,10 +11,12 @@ rl_agent:
     max_steps_per_episode: 1000
 
     # Real-car SB3 deployment parameters
-    speed_odom_topic: '/odom' # Odometry topic used for the speed feature
+    speed_odom_topic: '/odom' # Odometry topic used for speed/yaw/angular velocity features
+    sb3_observation_layout: 'auto' # auto, scan_speed, or rldd_frenet_scan
     sb3_scan_beams: 2155      # rldd PPO training used 2155 lidar beams
     sb3_lidar_max_range: 10.0 # rldd normalized clipped lidar ranges by 10m
     sb3_speed_scale: 3.2      # rldd linear_vel feature was speed / 3.2
+    sb3_default_pose_d: 0.0   # Used for 2160-dim models until Frenet projection is available
     sb3_action_steering_limit: 0.4189
     sb3_action_min_speed: 0.5
     sb3_action_max_speed: 4.0
