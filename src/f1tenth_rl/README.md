@@ -60,7 +60,7 @@ The SB3 real-car deployment path mirrors the `rldd` training wrappers:
 - LaserScan ranges are clipped to `sb3_lidar_max_range`, normalized to `[0, 1]`, and resampled to `sb3_scan_beams` beams.
 - The speed feature is read from `speed_odom_topic`, divided by `sb3_speed_scale`, clipped to `[0, 1]`, and appended after the scan.
 - For the common `rldd` model shape, the observation is `[2155 lidar beams, speed / 3.2]` for a total of 2156 values.
-- SB3 actions are treated as normalized actions in `[-1, 1]` for steering and `[0, 1]` for speed, then mapped back to steering/speed before publishing `/drive`.
+- SB3 actions are treated as normalized actions in `[-1, 1]` for both steering and speed. Steering is scaled directly, while speed is shifted to `[0, 1]` before mapping back to vehicle speed.
 - `drive_max_speed` limits the final command for real-car safety. Keep it low for initial tests.
 
 ## Configuration
