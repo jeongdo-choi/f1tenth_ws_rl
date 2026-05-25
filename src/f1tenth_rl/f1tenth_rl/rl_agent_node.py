@@ -49,6 +49,12 @@ class RLAgentNode(Node):
         self.declare_parameter('drive_steering_smoothing_alpha', 0.45)
         self.declare_parameter('drive_max_steering_delta', 0.08)
         self.declare_parameter('drive_turn_speed_reduction', 0.25)
+        self.declare_parameter('drive_wall_guard_enabled', True)
+        self.declare_parameter('drive_wall_guard_distance', 0.55)
+        self.declare_parameter('drive_wall_guard_steering_bias', 0.10)
+        self.declare_parameter('drive_wall_guard_max_toward_wall', 0.02)
+        self.declare_parameter('drive_wall_guard_speed_scale', 0.80)
+        self.declare_parameter('drive_wall_guard_reverse_sides', False)
         self.declare_parameter('sb3_observation_layout', 'auto')
         self.declare_parameter('sb3_scan_beams', 2155)
         self.declare_parameter('sb3_lidar_max_range', 10.0)
@@ -95,6 +101,26 @@ class RLAgentNode(Node):
             0.0,
             1.0
         ))
+        self.drive_wall_guard_enabled = bool(
+            self.get_parameter('drive_wall_guard_enabled').value
+        )
+        self.drive_wall_guard_distance = float(
+            self.get_parameter('drive_wall_guard_distance').value
+        )
+        self.drive_wall_guard_steering_bias = float(
+            self.get_parameter('drive_wall_guard_steering_bias').value
+        )
+        self.drive_wall_guard_max_toward_wall = float(
+            self.get_parameter('drive_wall_guard_max_toward_wall').value
+        )
+        self.drive_wall_guard_speed_scale = float(np.clip(
+            self.get_parameter('drive_wall_guard_speed_scale').value,
+            0.0,
+            1.0
+        ))
+        self.drive_wall_guard_reverse_sides = bool(
+            self.get_parameter('drive_wall_guard_reverse_sides').value
+        )
         self.sb3_observation_layout = self.get_parameter('sb3_observation_layout').value
         self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
         self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
@@ -237,7 +263,8 @@ class RLAgentNode(Node):
                 f'scan_speed_order={self.sb3_scan_speed_order}, '
                 f'steering_smoothing_alpha={self.drive_steering_smoothing_alpha}, '
                 f'max_steering_delta={self.drive_max_steering_delta}, '
-                f'turn_speed_reduction={self.drive_turn_speed_reduction}'
+                f'turn_speed_reduction={self.drive_turn_speed_reduction}, '
+                f'wall_guard_enabled={self.drive_wall_guard_enabled}'
             )
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
@@ -558,6 +585,72 @@ class RLAgentNode(Node):
 
         return float(np.clip(self.latest_speed / self.sb3_speed_scale, 0.0, 1.0))
 
+    def _scan_sector_distance(self, min_angle_deg, max_angle_deg):
+        if self.latest_scan is None or not self.latest_scan.ranges:
+            return None
+
+        ranges = np.asarray(self.latest_scan.ranges, dtype=np.float32)
+        ranges = np.nan_to_num(
+            ranges,
+            nan=np.nan,
+            posinf=np.nan,
+            neginf=np.nan
+        )
+        angles = self.latest_scan.angle_min + np.arange(len(ranges), dtype=np.float32) * (
+            self.latest_scan.angle_increment
+        )
+        min_angle = np.radians(min_angle_deg)
+        max_angle = np.radians(max_angle_deg)
+        mask = (angles >= min_angle) & (angles <= max_angle)
+        sector = ranges[mask]
+        sector = sector[np.isfinite(sector)]
+        sector = sector[sector > max(float(self.latest_scan.range_min), 0.02)]
+
+        if sector.size == 0:
+            return None
+
+        return float(np.percentile(sector, 25))
+
+    def _apply_wall_guard(self, steering, velocity):
+        if not self.drive_wall_guard_enabled or self.drive_wall_guard_distance <= 0.0:
+            return steering, velocity
+
+        left_distance = self._scan_sector_distance(45.0, 110.0)
+        right_distance = self._scan_sector_distance(-110.0, -45.0)
+
+        if self.drive_wall_guard_reverse_sides:
+            left_distance, right_distance = right_distance, left_distance
+
+        adjusted_steering = steering
+        max_closeness = 0.0
+
+        if left_distance is not None and left_distance < self.drive_wall_guard_distance:
+            closeness = 1.0 - left_distance / self.drive_wall_guard_distance
+            max_closeness = max(max_closeness, closeness)
+            if adjusted_steering > self.drive_wall_guard_max_toward_wall:
+                adjusted_steering = self.drive_wall_guard_max_toward_wall
+            adjusted_steering -= self.drive_wall_guard_steering_bias * closeness
+
+        if right_distance is not None and right_distance < self.drive_wall_guard_distance:
+            closeness = 1.0 - right_distance / self.drive_wall_guard_distance
+            max_closeness = max(max_closeness, closeness)
+            if adjusted_steering < -self.drive_wall_guard_max_toward_wall:
+                adjusted_steering = -self.drive_wall_guard_max_toward_wall
+            adjusted_steering += self.drive_wall_guard_steering_bias * closeness
+
+        adjusted_steering = float(np.clip(
+            adjusted_steering,
+            -self.drive_steering_limit,
+            self.drive_steering_limit
+        ))
+
+        if max_closeness > 0.0:
+            scale = 1.0 - (1.0 - self.drive_wall_guard_speed_scale) * max_closeness
+            velocity *= scale
+
+        velocity = float(np.clip(velocity, self.drive_min_speed, self.drive_max_speed))
+        return adjusted_steering, velocity
+
     def _smooth_drive_command(self, steering, velocity):
         target_steering = float(
             np.clip(steering, -self.drive_steering_limit, self.drive_steering_limit)
@@ -579,7 +672,6 @@ class RLAgentNode(Node):
         target_steering = float(
             np.clip(target_steering, -self.drive_steering_limit, self.drive_steering_limit)
         )
-        self.last_steering_cmd = target_steering
 
         target_speed = float(
             np.clip(velocity, self.drive_min_speed, self.drive_max_speed)
@@ -590,6 +682,12 @@ class RLAgentNode(Node):
             target_speed = float(
                 np.clip(target_speed, self.drive_min_speed, self.drive_max_speed)
             )
+
+        target_steering, target_speed = self._apply_wall_guard(
+            target_steering,
+            target_speed
+        )
+        self.last_steering_cmd = target_steering
 
         return target_steering, target_speed
 
