@@ -32,6 +32,12 @@ rl_agent:
     drive_steering_smoothing_alpha: 0.48 # Slower turn-in before sustained cornering
     drive_max_steering_delta: 0.09       # Limits sudden right/left correction near walls
     drive_turn_speed_reduction: 0.25     # Moderate slowdown only when steering hard
+    drive_wall_guard_enabled: true       # Prevent steering further into a close side wall
+    drive_wall_guard_distance: 0.55      # Side-wall distance where guard starts acting
+    drive_wall_guard_steering_bias: 0.10 # Push away from the close wall
+    drive_wall_guard_max_toward_wall: 0.02 # Allow only tiny steering toward a close wall
+    drive_wall_guard_speed_scale: 0.80   # Mild speed reduction while wall guard is active
+    drive_wall_guard_reverse_sides: false # Set true if left/right guard acts backward
     
     # DQN/custom PPO parameters
     hidden_dim: 256
