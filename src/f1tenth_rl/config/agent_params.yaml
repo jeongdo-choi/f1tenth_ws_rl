@@ -16,6 +16,7 @@ rl_agent:
     sb3_scan_beams: 2155      # rldd PPO training used 2155 lidar beams
     sb3_lidar_max_range: 10.0 # rldd normalized clipped lidar ranges by 10m
     sb3_reverse_scan: true    # Flip LaserScan left/right before feeding SB3 PPO
+    sb3_scan_speed_order: 'speed_first' # 2156-dim rldd FlattenObservation order
     sb3_speed_scale: 3.2      # rldd linear_vel feature was speed / 3.2
     sb3_default_pose_d: 0.0   # Fallback when no centerline CSV is configured
     sb3_centerline_csv: ''    # Leave empty for map-free 2156-dim scan+speed models
