@@ -15,6 +15,7 @@ rl_agent:
     sb3_observation_layout: 'auto' # auto, scan_speed, or rldd_frenet_scan
     sb3_scan_beams: 2155      # rldd PPO training used 2155 lidar beams
     sb3_lidar_max_range: 10.0 # rldd normalized clipped lidar ranges by 10m
+    sb3_reverse_scan: true    # Flip LaserScan left/right before feeding SB3 PPO
     sb3_speed_scale: 3.2      # rldd linear_vel feature was speed / 3.2
     sb3_default_pose_d: 0.0   # Fallback when no centerline CSV is configured
     sb3_centerline_csv: '/home/meric/f1tenth_ws_rl/src/pure_pursuit/racelines/e7_floor5.csv'
