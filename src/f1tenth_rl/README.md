@@ -61,7 +61,8 @@ The SB3 real-car deployment path mirrors the `rldd` training wrappers:
 - The node reads the saved SB3 observation size and action range from the `.zip` metadata when possible.
 - 2156-dim models use `[2155 lidar beams, speed / 3.2]`.
 - 2160-dim models use `[ang_vels_z, speed / 3.2, linear_vels_s, poses_d, poses_theta, 2155 lidar beams]`.
-- For 2160-dim real-car deployment, `linear_vels_s` is approximated from odometry speed and `poses_d` defaults to `sb3_default_pose_d` until a raceline Frenet projection is available.
+- For 2160-dim real-car deployment, `sb3_centerline_csv` can point to a centerline or raceline CSV so odometry pose is projected into Frenet-style `poses_d` and `linear_vels_s` features. If no CSV is configured, `poses_d` falls back to `sb3_default_pose_d`.
+- The default CSV format is `x,y,yaw`, configured with `sb3_centerline_x_col`, `sb3_centerline_y_col`, and `sb3_centerline_yaw_col`. If your file is `s,x,y,yaw`, set those columns to `1`, `2`, and `3`.
 - SB3 actions are mapped from the saved model action range, such as `[-1, -1]..[1, 1]` or `[-1, 0]..[1, 1]`, back to Ackermann steering/speed before publishing `/drive`.
 - `drive_max_speed` limits the final command for real-car safety. Keep it low for initial tests.
 
@@ -71,7 +72,7 @@ You can modify the parameters in `config/agent_params.yaml` to adjust:
 - Training hyperparameters (learning rate, batch size, etc.)
 - Reward function components and weights
 - `state_dim`, which is auto-overridden for SB3 checkpoints when the checkpoint input size can be inspected
-- SB3 sim-to-real parameters such as `sb3_observation_layout`, `sb3_scan_beams`, `sb3_speed_scale`, and `drive_max_speed`
+- SB3 sim-to-real parameters such as `sb3_observation_layout`, `sb3_scan_beams`, `sb3_speed_scale`, `sb3_centerline_csv`, and `drive_max_speed`
 
 ## Implementation Details
 
