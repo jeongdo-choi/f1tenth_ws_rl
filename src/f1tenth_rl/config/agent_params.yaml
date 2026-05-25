@@ -18,8 +18,8 @@ rl_agent:
     sb3_reverse_scan: true    # Flip LaserScan left/right before feeding SB3 PPO
     sb3_speed_scale: 3.2      # rldd linear_vel feature was speed / 3.2
     sb3_default_pose_d: 0.0   # Fallback when no centerline CSV is configured
-    sb3_centerline_csv: '/home/meric/f1tenth_ws_rl/src/pure_pursuit/racelines/e7_floor5.csv'
-    sb3_centerline_x_col: 0   # e7_floor5.csv format: x,y,yaw
+    sb3_centerline_csv: ''    # Leave empty for map-free 2156-dim scan+speed models
+    sb3_centerline_x_col: 0   # If using a CSV: x,y,yaw
     sb3_centerline_y_col: 1
     sb3_centerline_yaw_col: 2
     sb3_action_steering_limit: 0.4189
