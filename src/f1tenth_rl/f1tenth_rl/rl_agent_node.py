@@ -51,6 +51,10 @@ class RLAgentNode(Node):
         self.declare_parameter('sb3_lidar_max_range', 10.0)
         self.declare_parameter('sb3_speed_scale', 3.2)
         self.declare_parameter('sb3_default_pose_d', 0.0)
+        self.declare_parameter('sb3_centerline_csv', '')
+        self.declare_parameter('sb3_centerline_x_col', 0)
+        self.declare_parameter('sb3_centerline_y_col', 1)
+        self.declare_parameter('sb3_centerline_yaw_col', 2)
         self.declare_parameter('sb3_action_steering_limit', 0.4189)
         self.declare_parameter('sb3_action_min_speed', 0.5)
         self.declare_parameter('sb3_action_max_speed', 4.0)
@@ -78,6 +82,10 @@ class RLAgentNode(Node):
         self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
         self.sb3_speed_scale = float(self.get_parameter('sb3_speed_scale').value)
         self.sb3_default_pose_d = float(self.get_parameter('sb3_default_pose_d').value)
+        self.sb3_centerline_csv = self.get_parameter('sb3_centerline_csv').value
+        self.sb3_centerline_x_col = int(self.get_parameter('sb3_centerline_x_col').value)
+        self.sb3_centerline_y_col = int(self.get_parameter('sb3_centerline_y_col').value)
+        self.sb3_centerline_yaw_col = int(self.get_parameter('sb3_centerline_yaw_col').value)
         self.sb3_action_steering_limit = float(self.get_parameter('sb3_action_steering_limit').value)
         self.sb3_action_min_speed = float(self.get_parameter('sb3_action_min_speed').value)
         self.sb3_action_max_speed = float(self.get_parameter('sb3_action_max_speed').value)
@@ -99,6 +107,8 @@ class RLAgentNode(Node):
         self.has_speed_odom = False
         self.warned_missing_speed = False
         self.warned_frenet_approximation = False
+        self.centerline_points = None
+        self.centerline_yaws = None
         
         # Publishers and subscribers
         self.drive_pub = self.create_publisher(
@@ -113,6 +123,8 @@ class RLAgentNode(Node):
         self.speed_odom_sub = self.create_subscription(
             Odometry, self.speed_odom_topic, self.speed_odom_callback, 10)
         
+        self._load_centerline()
+
         # Initialize environment with reference to this node
         self.env = F1TenthEnv(node=self)
         
@@ -315,12 +327,18 @@ class RLAgentNode(Node):
         self.latest_odom = msg
     
     def speed_odom_callback(self, msg):
-        """Store speed and simple motion features for SB3 sim-to-real observations."""
-        self.latest_speed = float(msg.twist.twist.linear.x)
-        self.latest_linear_vel_s = self.latest_speed
+        """Store speed and Frenet-like motion features for SB3 observations."""
+        x = float(msg.pose.pose.position.x)
+        y = float(msg.pose.pose.position.y)
+        yaw = self._yaw_from_quaternion(msg.pose.pose.orientation)
+        speed = float(msg.twist.twist.linear.x)
+
+        self.latest_speed = speed
+        self.latest_linear_vel_s = speed
         self.latest_ang_vel_z = float(msg.twist.twist.angular.z)
-        self.latest_yaw = self._yaw_from_quaternion(msg.pose.pose.orientation)
+        self.latest_yaw = yaw
         self.has_speed_odom = True
+        self._update_centerline_projection(x, y, yaw, speed)
 
     def _yaw_from_quaternion(self, quaternion):
         x = quaternion.x
@@ -330,6 +348,71 @@ class RLAgentNode(Node):
         siny_cosp = 2.0 * (w * z + x * y)
         cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
         return float(np.arctan2(siny_cosp, cosy_cosp))
+
+    def _load_centerline(self):
+        path = str(self.sb3_centerline_csv).strip()
+        if not path:
+            self.get_logger().warn(
+                'No sb3_centerline_csv configured; 2160-dim SB3 poses_d will use sb3_default_pose_d.'
+            )
+            return
+
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+
+        if not os.path.exists(path):
+            self.get_logger().warn(f'SB3 centerline CSV not found: {path}')
+            return
+
+        try:
+            data = np.genfromtxt(path, delimiter=',', comments='#', dtype=np.float32)
+        except Exception as e:
+            self.get_logger().warn(f'Could not load SB3 centerline CSV {path}: {e}')
+            return
+
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+
+        max_col = max(self.sb3_centerline_x_col, self.sb3_centerline_y_col, self.sb3_centerline_yaw_col)
+        if data.ndim != 2 or data.shape[1] <= max_col:
+            self.get_logger().warn(
+                f'SB3 centerline CSV {path} does not have required columns up to {max_col}.'
+            )
+            return
+
+        points = data[:, [self.sb3_centerline_x_col, self.sb3_centerline_y_col]]
+        yaws = data[:, self.sb3_centerline_yaw_col]
+        finite_mask = np.isfinite(points).all(axis=1) & np.isfinite(yaws)
+        points = points[finite_mask]
+        yaws = yaws[finite_mask]
+
+        if len(points) < 2:
+            self.get_logger().warn(f'SB3 centerline CSV {path} needs at least two valid points.')
+            return
+
+        self.centerline_points = points.astype(np.float32)
+        self.centerline_yaws = yaws.astype(np.float32)
+        self.get_logger().info(f'Loaded {len(points)} SB3 centerline points from {path}')
+
+    def _update_centerline_projection(self, x, y, yaw, speed):
+        if self.centerline_points is None or self.centerline_yaws is None:
+            self.latest_pose_d = self.sb3_default_pose_d
+            self.latest_linear_vel_s = speed
+            return
+
+        current = np.array([x, y], dtype=np.float32)
+        deltas = self.centerline_points - current
+        nearest_idx = int(np.argmin(np.einsum('ij,ij->i', deltas, deltas)))
+        closest_x, closest_y = self.centerline_points[nearest_idx]
+        centerline_yaw = float(self.centerline_yaws[nearest_idx])
+
+        dx = x - float(closest_x)
+        dy = y - float(closest_y)
+        self.latest_pose_d = float(dx * np.cos(centerline_yaw) + dy * np.sin(centerline_yaw))
+
+        # This mirrors rldd's FrenetObsWrapper convention for linear_vels_s.
+        self.latest_linear_vel_s = float(speed * np.sin(yaw - centerline_yaw))
     
     def get_state(self):
         """Convert laser scan to a fixed-size state vector for the RL agent"""
@@ -396,10 +479,10 @@ class RLAgentNode(Node):
         return 'scan_speed'
 
     def _get_sb3_frenet_scan_state(self, scan_state):
-        if not self.warned_frenet_approximation:
+        if self.centerline_points is None and not self.warned_frenet_approximation:
             self.get_logger().warn(
-                'Using approximate rldd 2160 observation layout. '
-                'poses_d defaults to sb3_default_pose_d because no raceline Frenet projection is available.'
+                'Using rldd 2160 observation layout without a centerline; '
+                'poses_d defaults to sb3_default_pose_d.'
             )
             self.warned_frenet_approximation = True
 
