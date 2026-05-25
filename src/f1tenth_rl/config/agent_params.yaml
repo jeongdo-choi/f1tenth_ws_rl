@@ -28,7 +28,7 @@ rl_agent:
     sb3_action_max_speed: 4.0
     drive_steering_limit: 0.4189
     drive_min_speed: 0.0
-    drive_max_speed: 0.90     # Slightly slower to reduce wall overcorrection
+    drive_max_speed: 1.30     # Higher test speed; wall/turn guards still reduce when needed
     drive_steering_smoothing_alpha: 0.48 # Slower turn-in before sustained cornering
     drive_max_steering_delta: 0.09       # Limits sudden right/left correction near walls
     drive_turn_speed_reduction: 0.25     # Moderate slowdown only when steering hard
