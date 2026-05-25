@@ -46,7 +46,7 @@ source install/local_setup.bash
 ros2 launch f1tenth_rl rl_agent_launch.py training_mode:=false model_path:=/path/to/your/model.pt
 ```
 
-For a Stable-Baselines3 PPO `.zip` model, use `model_type:=sb3_ppo`:
+For a Stable-Baselines3 PPO `.zip` model trained with the `rldd` environment, use `model_type:=sb3_ppo`:
 ```bash
 source /opt/ros/foxy/setup.bash
 source install/local_setup.bash
@@ -56,23 +56,27 @@ ros2 launch f1tenth_rl rl_agent_launch.py \
   model_path:=/path/to/best_model.zip
 ```
 
-The SB3 model is expected to output a two-value continuous action: `[steering_angle, velocity]`.
-The node clips steering to `[-0.4, 0.4]` radians and speed to `[0.0, 2.0]` m/s before publishing `/drive`.
-The `state_dim` parameter must match the observation size used when the model was trained.
+The SB3 real-car deployment path mirrors the `rldd` training wrappers:
+- LaserScan ranges are clipped to `sb3_lidar_max_range`, normalized to `[0, 1]`, and resampled to `sb3_scan_beams` beams.
+- The speed feature is read from `speed_odom_topic`, divided by `sb3_speed_scale`, clipped to `[0, 1]`, and appended after the scan.
+- For the common `rldd` model shape, the observation is `[2155 lidar beams, speed / 3.2]` for a total of 2156 values.
+- SB3 actions are treated as normalized actions in `[-1, 1]` for steering and `[0, 1]` for speed, then mapped back to steering/speed before publishing `/drive`.
+- `drive_max_speed` limits the final command for real-car safety. Keep it low for initial tests.
 
 ## Configuration
 
 You can modify the parameters in `config/agent_params.yaml` to adjust:
 - Training hyperparameters (learning rate, batch size, etc.)
 - Reward function components and weights
-- `state_dim`, which must match the observation size used when the model was trained
+- `state_dim`, which is auto-overridden for SB3 checkpoints when the checkpoint input size can be inspected
+- SB3 sim-to-real parameters such as `sb3_scan_beams`, `sb3_speed_scale`, and `drive_max_speed`
 
 ## Implementation Details
 
 ### RL Agent Node
 
 The `rl_agent_node.py` implements the ROS2 node that:
-- Subscribes to laser scan and odometry data from the simulator
+- Subscribes to laser scan and odometry data from the simulator or vehicle
 - Processes observations and calculates rewards
 - Trains the reinforcement learning model
 - Publishes drive commands to control the vehicle
