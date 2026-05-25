@@ -28,10 +28,10 @@ rl_agent:
     sb3_action_max_speed: 4.0
     drive_steering_limit: 0.4189
     drive_min_speed: 0.0
-    drive_max_speed: 0.8      # Lower speed helps the real car complete tight corners
-    drive_steering_smoothing_alpha: 0.75 # Higher = quicker steering response
-    drive_max_steering_delta: 0.16       # Allows faster steering buildup into corners
-    drive_turn_speed_reduction: 0.45     # Slow down more when steering hard
+    drive_max_speed: 0.95     # Recover speed while keeping a first-test ceiling
+    drive_steering_smoothing_alpha: 0.60 # Moderates early steering response
+    drive_max_steering_delta: 0.12       # Slower steering buildup than the aggressive cornering setup
+    drive_turn_speed_reduction: 0.30     # Less corner slowdown than the aggressive setup
     
     # DQN/custom PPO parameters
     hidden_dim: 256
