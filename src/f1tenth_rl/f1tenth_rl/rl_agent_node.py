@@ -49,6 +49,7 @@ class RLAgentNode(Node):
         self.declare_parameter('sb3_observation_layout', 'auto')
         self.declare_parameter('sb3_scan_beams', 2155)
         self.declare_parameter('sb3_lidar_max_range', 10.0)
+        self.declare_parameter('sb3_reverse_scan', False)
         self.declare_parameter('sb3_speed_scale', 3.2)
         self.declare_parameter('sb3_default_pose_d', 0.0)
         self.declare_parameter('sb3_centerline_csv', '')
@@ -80,6 +81,7 @@ class RLAgentNode(Node):
         self.sb3_observation_layout = self.get_parameter('sb3_observation_layout').value
         self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
         self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
+        self.sb3_reverse_scan = bool(self.get_parameter('sb3_reverse_scan').value)
         self.sb3_speed_scale = float(self.get_parameter('sb3_speed_scale').value)
         self.sb3_default_pose_d = float(self.get_parameter('sb3_default_pose_d').value)
         self.sb3_centerline_csv = self.get_parameter('sb3_centerline_csv').value
@@ -203,7 +205,8 @@ class RLAgentNode(Node):
                 f'SB3 observation_dim={self.state_dim}, '
                 f'action_low={self.sb3_action_low.tolist()}, '
                 f'action_high={self.sb3_action_high.tolist()}, '
-                f'observation_layout={self._resolve_sb3_observation_layout()}'
+                f'observation_layout={self._resolve_sb3_observation_layout()}, '
+                f'reverse_scan={self.sb3_reverse_scan}'
             )
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
@@ -434,6 +437,8 @@ class RLAgentNode(Node):
         )
         ranges = np.clip(ranges, 0.0, self.sb3_lidar_max_range)
         normalized_ranges = ranges / self.sb3_lidar_max_range
+        if self.sb3_reverse_scan:
+            normalized_ranges = normalized_ranges[::-1]
 
         if len(normalized_ranges) == target_size:
             return normalized_ranges.astype(np.float32)
