@@ -24,7 +24,7 @@ SB3_MODEL_TYPES = ('sb3_ppo', 'stable_baselines3_ppo')
 class RLAgentNode(Node):
     def __init__(self):
         super().__init__('rl_agent_node')
-        
+
         # Declare parameters
         self.declare_parameter('training_mode', True)
         self.declare_parameter('model_type', 'dqn')
@@ -46,6 +46,9 @@ class RLAgentNode(Node):
         self.declare_parameter('drive_steering_limit', 0.4)
         self.declare_parameter('drive_min_speed', 0.0)
         self.declare_parameter('drive_max_speed', 1.0)
+        self.declare_parameter('drive_steering_smoothing_alpha', 0.45)
+        self.declare_parameter('drive_max_steering_delta', 0.08)
+        self.declare_parameter('drive_turn_speed_reduction', 0.25)
         self.declare_parameter('sb3_observation_layout', 'auto')
         self.declare_parameter('sb3_scan_beams', 2155)
         self.declare_parameter('sb3_lidar_max_range', 10.0)
@@ -60,7 +63,7 @@ class RLAgentNode(Node):
         self.declare_parameter('sb3_action_steering_limit', 0.4189)
         self.declare_parameter('sb3_action_min_speed', 0.5)
         self.declare_parameter('sb3_action_max_speed', 4.0)
-        
+
         # Get parameters
         self.training_mode = self.get_parameter('training_mode').value
         self.model_type = self.get_parameter('model_type').value.lower().replace('-', '_')
@@ -79,6 +82,19 @@ class RLAgentNode(Node):
         self.drive_steering_limit = float(self.get_parameter('drive_steering_limit').value)
         self.drive_min_speed = float(self.get_parameter('drive_min_speed').value)
         self.drive_max_speed = float(self.get_parameter('drive_max_speed').value)
+        self.drive_steering_smoothing_alpha = float(np.clip(
+            self.get_parameter('drive_steering_smoothing_alpha').value,
+            0.0,
+            1.0
+        ))
+        self.drive_max_steering_delta = float(
+            self.get_parameter('drive_max_steering_delta').value
+        )
+        self.drive_turn_speed_reduction = float(np.clip(
+            self.get_parameter('drive_turn_speed_reduction').value,
+            0.0,
+            1.0
+        ))
         self.sb3_observation_layout = self.get_parameter('sb3_observation_layout').value
         self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
         self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
@@ -97,16 +113,16 @@ class RLAgentNode(Node):
         self.sb3_action_max_speed = float(self.get_parameter('sb3_action_max_speed').value)
         self.sb3_action_low = np.array([-1.0, -1.0], dtype=np.float32)
         self.sb3_action_high = np.array([1.0, 1.0], dtype=np.float32)
-        
+
         if self.sb3_scan_speed_order not in ('speed_first', 'scan_first'):
             self.get_logger().warn(
                 f'Unknown sb3_scan_speed_order={self.sb3_scan_speed_order}; using speed_first.'
             )
             self.sb3_scan_speed_order = 'speed_first'
-        
+
         # Create directories if they don't exist
         os.makedirs(self.save_path, exist_ok=True)
-        
+
         # Store the latest observations
         self.latest_scan = None
         self.latest_odom = None
@@ -121,47 +137,48 @@ class RLAgentNode(Node):
         self.warned_frenet_approximation = False
         self.centerline_points = None
         self.centerline_yaws = None
-        
+        self.last_steering_cmd = 0.0
+
         # Publishers and subscribers
         self.drive_pub = self.create_publisher(
             AckermannDriveStamped, '/drive', 10)
-        
+
         self.scan_sub = self.create_subscription(
             LaserScan, '/scan', self.scan_callback, 10)
-        
+
         self.odom_sub = self.create_subscription(
             Odometry, '/pf/pose/odom', self.odom_callback, 10)
 
         self.speed_odom_sub = self.create_subscription(
             Odometry, self.speed_odom_topic, self.speed_odom_callback, 10)
-        
+
         self._load_centerline()
 
         # Initialize environment with reference to this node
         self.env = F1TenthEnv(node=self)
-        
+
         # Set starting position from parameters
         self.env.start_position = [
             self.get_parameter('start_x').value,
             self.get_parameter('start_y').value,
             self.get_parameter('start_yaw').value
         ]
-        
+
         # Initialize RL agent
         self.initialize_agent()
-        
+
         # Training loop timer (runs at 10Hz)
         self.timer = self.create_timer(0.1, self.training_loop)
-        
+
         # Episodic data
         self.episode_reward = 0.0
         self.episode_steps = 0
         self.episodes_completed = 0
         self.pending_transition = None
         self.ppo_update_interval = 200
-        
+
         self.get_logger().info('RL Agent Node initialized')
-    
+
     def initialize_agent(self):
         """Initialize the RL agent based on specified model type"""
         if self.model_type == 'dqn':
@@ -217,11 +234,14 @@ class RLAgentNode(Node):
                 f'action_high={self.sb3_action_high.tolist()}, '
                 f'observation_layout={self._resolve_sb3_observation_layout()}, '
                 f'reverse_scan={self.sb3_reverse_scan}, '
-                f'scan_speed_order={self.sb3_scan_speed_order}'
+                f'scan_speed_order={self.sb3_scan_speed_order}, '
+                f'steering_smoothing_alpha={self.drive_steering_smoothing_alpha}, '
+                f'max_steering_delta={self.drive_max_steering_delta}, '
+                f'turn_speed_reduction={self.drive_turn_speed_reduction}'
             )
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
-        
+
         # Load custom PyTorch checkpoints if provided.
         if self.model_path and self.model_type not in SB3_MODEL_TYPES:
             try:
@@ -322,7 +342,7 @@ class RLAgentNode(Node):
             'observation_space': observation_space,
             'action_space': action_space,
         }
-    
+
     def _build_discrete_actions(self):
         """Create the steering/velocity grid used by DQN."""
         actions = []
@@ -330,16 +350,16 @@ class RLAgentNode(Node):
             for velocity in [1.0, 2.0, 3.0]:
                 actions.append([steering, velocity])
         return actions
-    
+
     def scan_callback(self, msg):
         """Store the latest laser scan data"""
         self.latest_scan = msg
-    
+
     def odom_callback(self, msg):
         """Store the latest odometry data"""
         self.prev_odom = self.latest_odom
         self.latest_odom = msg
-    
+
     def speed_odom_callback(self, msg):
         """Store speed and Frenet-like motion features for SB3 observations."""
         x = float(msg.pose.pose.position.x)
@@ -427,7 +447,7 @@ class RLAgentNode(Node):
 
         # This mirrors rldd's FrenetObsWrapper convention for linear_vels_s.
         self.latest_linear_vel_s = float(speed * np.sin(yaw - centerline_yaw))
-    
+
     def get_state(self):
         """Convert laser scan to a fixed-size state vector for the RL agent"""
         if self.latest_scan is None:
@@ -537,16 +557,48 @@ class RLAgentNode(Node):
             return 0.0
 
         return float(np.clip(self.latest_speed / self.sb3_speed_scale, 0.0, 1.0))
-    
-    def publish_drive_command(self, steering, velocity):
-        """Publish drive command to the car"""
-        msg = AckermannDriveStamped()
-        msg.drive.steering_angle = float(
+
+    def _smooth_drive_command(self, steering, velocity):
+        target_steering = float(
             np.clip(steering, -self.drive_steering_limit, self.drive_steering_limit)
         )
-        msg.drive.speed = float(
+
+        if 0.0 < self.drive_steering_smoothing_alpha < 1.0:
+            target_steering = self.last_steering_cmd + self.drive_steering_smoothing_alpha * (
+                target_steering - self.last_steering_cmd
+            )
+
+        if self.drive_max_steering_delta > 0.0:
+            steering_delta = float(np.clip(
+                target_steering - self.last_steering_cmd,
+                -self.drive_max_steering_delta,
+                self.drive_max_steering_delta
+            ))
+            target_steering = self.last_steering_cmd + steering_delta
+
+        target_steering = float(
+            np.clip(target_steering, -self.drive_steering_limit, self.drive_steering_limit)
+        )
+        self.last_steering_cmd = target_steering
+
+        target_speed = float(
             np.clip(velocity, self.drive_min_speed, self.drive_max_speed)
         )
+        if self.drive_turn_speed_reduction > 0.0 and self.drive_steering_limit > 0.0:
+            turn_ratio = min(abs(target_steering) / self.drive_steering_limit, 1.0)
+            target_speed *= 1.0 - self.drive_turn_speed_reduction * turn_ratio
+            target_speed = float(
+                np.clip(target_speed, self.drive_min_speed, self.drive_max_speed)
+            )
+
+        return target_steering, target_speed
+
+    def publish_drive_command(self, steering, velocity):
+        """Publish drive command to the car"""
+        steering, velocity = self._smooth_drive_command(steering, velocity)
+        msg = AckermannDriveStamped()
+        msg.drive.steering_angle = steering
+        msg.drive.speed = velocity
         self.drive_pub.publish(msg)
 
     def select_action(self, state):
@@ -602,14 +654,14 @@ class RLAgentNode(Node):
         )
         velocity = float(np.clip(velocity, self.drive_min_speed, self.drive_max_speed))
         return steering, velocity
-    
+
     def training_loop(self):
         """Main RL training/inference loop"""
         if self.latest_scan is None:
             return
         if self.training_mode and self.latest_odom is None:
             return
-        
+
         current_state = self.get_state()
         if current_state is None:
             return
@@ -639,7 +691,7 @@ class RLAgentNode(Node):
             self.latest_odom,
             self.prev_odom
         )
-        
+
         self.episode_reward += reward
         self.episode_steps += 1
 
@@ -651,7 +703,7 @@ class RLAgentNode(Node):
                 next_state.copy(),
                 done
             )
-            
+
             if len(self.agent.replay_buffer) > self.agent.batch_size:
                 self.agent.train()
         elif self.model_type == 'ppo':
@@ -679,14 +731,15 @@ class RLAgentNode(Node):
         """Log, save, and reset after an episode ends."""
         self.episodes_completed += 1
         self.env.reset_car_position()
+        self.last_steering_cmd = 0.0
         self.get_logger().info('Episode ended! Resetting car position.')
-        
+
         self.get_logger().info(
             f'Episode {self.episodes_completed}: '
             f'Reward={self.episode_reward:.2f}, '
             f'Steps={self.episode_steps}'
         )
-        
+
         if self.episodes_completed % 10 == 0:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             save_path = os.path.join(
@@ -695,7 +748,7 @@ class RLAgentNode(Node):
             )
             self.agent.save(save_path)
             self.get_logger().info(f'Saved model to {save_path}')
-        
+
         self.episode_reward = 0.0
         self.episode_steps = 0
         self.pending_transition = None
