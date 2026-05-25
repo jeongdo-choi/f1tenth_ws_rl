@@ -222,7 +222,7 @@ class RLAgentNode(Node):
             dtype=np.float32
         )
         action_space = spaces.Box(
-            low=np.array([-1.0, 0.0], dtype=np.float32),
+            low=np.array([-1.0, -1.0], dtype=np.float32),
             high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
@@ -371,10 +371,11 @@ class RLAgentNode(Node):
 
     def _convert_sb3_action(self, action):
         steering_norm = float(np.clip(action[0], -1.0, 1.0))
-        speed_norm = float(np.clip(action[1], 0.0, 1.0))
+        speed_norm = float(np.clip(action[1], -1.0, 1.0))
+        speed_ratio = (speed_norm + 1.0) * 0.5
 
         steering = steering_norm * self.sb3_action_steering_limit
-        velocity = self.sb3_action_min_speed + speed_norm * (
+        velocity = self.sb3_action_min_speed + speed_ratio * (
             self.sb3_action_max_speed - self.sb3_action_min_speed
         )
         velocity = float(np.clip(velocity, self.drive_min_speed, self.drive_max_speed))
