@@ -29,6 +29,9 @@ rl_agent:
     drive_steering_limit: 0.4
     drive_min_speed: 0.0
     drive_max_speed: 1.0      # Keep low for first real-car tests
+    drive_steering_smoothing_alpha: 0.45 # Lower = smoother, 1.0 = almost raw model steering
+    drive_max_steering_delta: 0.08       # Max steering-angle change per 10Hz control tick
+    drive_turn_speed_reduction: 0.25     # Slow down proportionally when steering hard
     
     # DQN/custom PPO parameters
     hidden_dim: 256
