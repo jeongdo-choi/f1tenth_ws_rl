@@ -6,7 +6,7 @@ urg_node:
     ip_port: 10940
     # serial_port: "/dev/sensors/hokuyo"
     serial_baud: 115200
-    laser_frame_id: "laser"
+    frame_id: "laser"
     calibrate_time: false
     default_user_latency: 0.0
     diagnostics_tolerance: 0.05
