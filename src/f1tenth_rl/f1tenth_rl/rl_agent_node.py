@@ -50,6 +50,7 @@ class RLAgentNode(Node):
         self.declare_parameter('sb3_scan_beams', 2155)
         self.declare_parameter('sb3_lidar_max_range', 10.0)
         self.declare_parameter('sb3_reverse_scan', False)
+        self.declare_parameter('sb3_scan_speed_order', 'speed_first')
         self.declare_parameter('sb3_speed_scale', 3.2)
         self.declare_parameter('sb3_default_pose_d', 0.0)
         self.declare_parameter('sb3_centerline_csv', '')
@@ -82,6 +83,9 @@ class RLAgentNode(Node):
         self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
         self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
         self.sb3_reverse_scan = bool(self.get_parameter('sb3_reverse_scan').value)
+        self.sb3_scan_speed_order = str(
+            self.get_parameter('sb3_scan_speed_order').value
+        ).lower().strip()
         self.sb3_speed_scale = float(self.get_parameter('sb3_speed_scale').value)
         self.sb3_default_pose_d = float(self.get_parameter('sb3_default_pose_d').value)
         self.sb3_centerline_csv = self.get_parameter('sb3_centerline_csv').value
@@ -93,6 +97,12 @@ class RLAgentNode(Node):
         self.sb3_action_max_speed = float(self.get_parameter('sb3_action_max_speed').value)
         self.sb3_action_low = np.array([-1.0, -1.0], dtype=np.float32)
         self.sb3_action_high = np.array([1.0, 1.0], dtype=np.float32)
+        
+        if self.sb3_scan_speed_order not in ('speed_first', 'scan_first'):
+            self.get_logger().warn(
+                f'Unknown sb3_scan_speed_order={self.sb3_scan_speed_order}; using speed_first.'
+            )
+            self.sb3_scan_speed_order = 'speed_first'
         
         # Create directories if they don't exist
         os.makedirs(self.save_path, exist_ok=True)
@@ -206,7 +216,8 @@ class RLAgentNode(Node):
                 f'action_low={self.sb3_action_low.tolist()}, '
                 f'action_high={self.sb3_action_high.tolist()}, '
                 f'observation_layout={self._resolve_sb3_observation_layout()}, '
-                f'reverse_scan={self.sb3_reverse_scan}'
+                f'reverse_scan={self.sb3_reverse_scan}, '
+                f'scan_speed_order={self.sb3_scan_speed_order}'
             )
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
@@ -467,10 +478,11 @@ class RLAgentNode(Node):
         if layout == 'rldd_frenet_scan':
             return self._get_sb3_frenet_scan_state(scan_state)
 
-        speed_feature = self._get_speed_feature()
-        state = np.concatenate(
-            [scan_state, np.array([speed_feature], dtype=np.float32)]
-        )
+        speed_feature = np.array([self._get_speed_feature()], dtype=np.float32)
+        if self.sb3_scan_speed_order == 'scan_first':
+            state = np.concatenate([scan_state, speed_feature])
+        else:
+            state = np.concatenate([speed_feature, scan_state])
         return self._match_state_dim(state)
 
     def _resolve_sb3_observation_layout(self):
