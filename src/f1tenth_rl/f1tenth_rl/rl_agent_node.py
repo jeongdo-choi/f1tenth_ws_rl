@@ -55,6 +55,12 @@ class RLAgentNode(Node):
         self.declare_parameter('drive_wall_guard_max_toward_wall', 0.02)
         self.declare_parameter('drive_wall_guard_speed_scale', 0.80)
         self.declare_parameter('drive_wall_guard_reverse_sides', False)
+        self.declare_parameter('drive_front_speed_scheduler_enabled', True)
+        self.declare_parameter('drive_front_speed_sector_deg', 15.0)
+        self.declare_parameter('drive_front_speed_clear_distance', 3.0)
+        self.declare_parameter('drive_front_speed_slow_distance', 1.5)
+        self.declare_parameter('drive_front_speed_mid_limit', 1.3)
+        self.declare_parameter('drive_front_speed_min_limit', 0.8)
         self.declare_parameter('sb3_observation_layout', 'auto')
         self.declare_parameter('sb3_scan_beams', 2155)
         self.declare_parameter('sb3_lidar_max_range', 10.0)
@@ -120,6 +126,24 @@ class RLAgentNode(Node):
         ))
         self.drive_wall_guard_reverse_sides = bool(
             self.get_parameter('drive_wall_guard_reverse_sides').value
+        )
+        self.drive_front_speed_scheduler_enabled = bool(
+            self.get_parameter('drive_front_speed_scheduler_enabled').value
+        )
+        self.drive_front_speed_sector_deg = abs(float(
+            self.get_parameter('drive_front_speed_sector_deg').value
+        ))
+        self.drive_front_speed_clear_distance = float(
+            self.get_parameter('drive_front_speed_clear_distance').value
+        )
+        self.drive_front_speed_slow_distance = float(
+            self.get_parameter('drive_front_speed_slow_distance').value
+        )
+        self.drive_front_speed_mid_limit = float(
+            self.get_parameter('drive_front_speed_mid_limit').value
+        )
+        self.drive_front_speed_min_limit = float(
+            self.get_parameter('drive_front_speed_min_limit').value
         )
         self.sb3_observation_layout = self.get_parameter('sb3_observation_layout').value
         self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
@@ -264,7 +288,8 @@ class RLAgentNode(Node):
                 f'steering_smoothing_alpha={self.drive_steering_smoothing_alpha}, '
                 f'max_steering_delta={self.drive_max_steering_delta}, '
                 f'turn_speed_reduction={self.drive_turn_speed_reduction}, '
-                f'wall_guard_enabled={self.drive_wall_guard_enabled}'
+                f'wall_guard_enabled={self.drive_wall_guard_enabled}, '
+                f'front_speed_scheduler_enabled={self.drive_front_speed_scheduler_enabled}'
             )
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
@@ -611,6 +636,40 @@ class RLAgentNode(Node):
 
         return float(np.percentile(sector, 25))
 
+    def _apply_front_speed_scheduler(self, velocity):
+        if not self.drive_front_speed_scheduler_enabled:
+            return velocity
+
+        front_distance = self._scan_sector_distance(
+            -self.drive_front_speed_sector_deg,
+            self.drive_front_speed_sector_deg
+        )
+        if front_distance is None:
+            return velocity
+
+        clear_distance = max(
+            self.drive_front_speed_clear_distance,
+            self.drive_front_speed_slow_distance
+        )
+        slow_distance = min(
+            self.drive_front_speed_clear_distance,
+            self.drive_front_speed_slow_distance
+        )
+
+        if front_distance > clear_distance:
+            speed_limit = self.drive_max_speed
+        elif front_distance > slow_distance:
+            speed_limit = self.drive_front_speed_mid_limit
+        else:
+            speed_limit = self.drive_front_speed_min_limit
+
+        speed_limit = float(np.clip(
+            speed_limit,
+            self.drive_min_speed,
+            self.drive_max_speed
+        ))
+        return min(velocity, speed_limit)
+
     def _apply_wall_guard(self, steering, velocity):
         if not self.drive_wall_guard_enabled or self.drive_wall_guard_distance <= 0.0:
             return steering, velocity
@@ -683,6 +742,7 @@ class RLAgentNode(Node):
                 np.clip(target_speed, self.drive_min_speed, self.drive_max_speed)
             )
 
+        target_speed = self._apply_front_speed_scheduler(target_speed)
         target_steering, target_speed = self._apply_wall_guard(
             target_steering,
             target_speed
