@@ -29,12 +29,12 @@ rl_agent:
     drive_steering_limit: 0.4189
     drive_min_speed: 0.0
     drive_max_speed: 1.30     # Higher test speed; wall/turn guards still reduce when needed
-    drive_steering_smoothing_alpha: 0.48 # Slower turn-in before sustained cornering
-    drive_max_steering_delta: 0.09       # Limits sudden right/left correction near walls
+    drive_steering_smoothing_alpha: 0.38 # More smoothing to reduce left-right oscillation
+    drive_max_steering_delta: 0.07       # Smaller per-tick steering change to calm S-turning
     drive_turn_speed_reduction: 0.25     # Moderate slowdown only when steering hard
     drive_wall_guard_enabled: true       # Prevent steering further into a close side wall
-    drive_wall_guard_distance: 0.55      # Side-wall distance where guard starts acting
-    drive_wall_guard_steering_bias: 0.10 # Push away from the close wall
+    drive_wall_guard_distance: 0.45      # Guard starts closer to the wall to avoid early weaving
+    drive_wall_guard_steering_bias: 0.06 # Gentler push away from the close wall
     drive_wall_guard_max_toward_wall: 0.02 # Allow only tiny steering toward a close wall
     drive_wall_guard_speed_scale: 0.80   # Mild speed reduction while wall guard is active
     drive_wall_guard_reverse_sides: false # Set true if left/right guard acts backward
