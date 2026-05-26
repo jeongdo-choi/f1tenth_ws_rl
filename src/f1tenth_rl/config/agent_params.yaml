@@ -38,6 +38,12 @@ rl_agent:
     drive_wall_guard_max_toward_wall: 0.02 # Allow only tiny steering toward a close wall
     drive_wall_guard_speed_scale: 0.80   # Mild speed reduction while wall guard is active
     drive_wall_guard_reverse_sides: false # Set true if left/right guard acts backward
+    drive_front_speed_scheduler_enabled: true # Limit speed from front free-space distance
+    drive_front_speed_sector_deg: 15.0    # Front sector half-angle for distance checks
+    drive_front_speed_clear_distance: 3.0 # Above this, allow drive_max_speed
+    drive_front_speed_slow_distance: 1.5  # Below this, use the minimum front speed limit
+    drive_front_speed_mid_limit: 1.3      # Speed cap when front distance is 1.5m-3.0m
+    drive_front_speed_min_limit: 0.8      # Speed cap when front distance is below 1.5m
     
     # DQN/custom PPO parameters
     hidden_dim: 256
