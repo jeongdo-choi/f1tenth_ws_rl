@@ -23,20 +23,20 @@ rl_agent:
     sb3_centerline_x_col: 0   # If using a CSV: x,y,yaw
     sb3_centerline_y_col: 1
     sb3_centerline_yaw_col: 2
-    sb3_action_steering_limit: 0.4189
+    sb3_action_steering_limit: 0.32
     sb3_action_min_speed: 0.5
     sb3_action_max_speed: 4.0
-    drive_steering_limit: 0.4189
+    drive_steering_limit: 0.32
     drive_min_speed: 0.0
     drive_max_speed: 2.00     # Higher test speed; wall/turn guards still reduce when needed
-    drive_steering_smoothing_alpha: 0.30 # Stronger smoothing to reduce left-right oscillation
-    drive_max_steering_delta: 0.055      # Lower per-tick steering change to calm S-turning
-    drive_turn_speed_reduction: 0.25     # Moderate slowdown only when steering hard
+    drive_steering_smoothing_alpha: 0.55 # Faster response with lower steering gain
+    drive_max_steering_delta: 0.10       # Avoid lag while still limiting sudden steering snaps
+    drive_turn_speed_reduction: 0.35     # Slow more only while steering hard
     drive_wall_guard_enabled: true       # Prevent steering further into a close side wall
-    drive_wall_guard_distance: 0.38      # Guard starts later so it does not weave on straights
-    drive_wall_guard_steering_bias: 0.035 # Softer push away from the close wall
-    drive_wall_guard_max_toward_wall: 0.02 # Allow only tiny steering toward a close wall
-    drive_wall_guard_speed_scale: 0.80   # Mild speed reduction while wall guard is active
+    drive_wall_guard_distance: 0.42      # Guard close walls without weaving too early
+    drive_wall_guard_steering_bias: 0.04 # Gentle push away from the close wall
+    drive_wall_guard_max_toward_wall: 0.00 # Do not allow steering into a close wall
+    drive_wall_guard_speed_scale: 0.75   # Reduce speed while wall guard is active
     drive_wall_guard_reverse_sides: false # Set true if left/right guard acts backward
     drive_front_speed_scheduler_enabled: true # Limit speed from front free-space distance
     drive_front_speed_sector_deg: 15.0    # Front sector half-angle for distance checks
