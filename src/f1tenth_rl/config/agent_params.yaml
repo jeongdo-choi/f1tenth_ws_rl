@@ -44,6 +44,11 @@ rl_agent:
     drive_front_speed_slow_distance: 1.5  # Below this, use the minimum front speed limit
     drive_front_speed_mid_limit: 1.3      # Speed cap when front distance is 1.5m-3.0m
     drive_front_speed_min_limit: 0.8      # Speed cap when front distance is below 1.5m
+    drive_wide_corridor_straighten_enabled: true # Experiment: damp steering in wide/open corridors
+    drive_wide_corridor_side_distance: 1.2  # Both side sectors must be at least this open
+    drive_wide_corridor_front_distance: 2.5 # Front sector must be at least this open
+    drive_wide_corridor_steering_scale: 0.35 # Keep this fraction of steering in wide-open space
+    drive_wide_corridor_max_steering: 0.06   # Absolute steering cap while straightener is active
     
     # DQN/custom PPO parameters
     hidden_dim: 256
