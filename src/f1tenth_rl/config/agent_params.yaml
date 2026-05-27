@@ -28,7 +28,7 @@ rl_agent:
     sb3_action_max_speed: 4.0
     drive_steering_limit: 0.32
     drive_min_speed: 0.0
-    drive_max_speed: 2.00     # Safer test cap; front/wall/turn guards still reduce when needed
+    drive_max_speed: 2.50     # Faster test cap; front/wall/turn guards still reduce when needed
     drive_steering_smoothing_alpha: 0.55 # Faster response with lower steering gain
     drive_max_steering_delta: 0.10       # Avoid lag while still limiting sudden steering snaps
     drive_turn_speed_reduction: 0.35     # Slow more only while steering hard
