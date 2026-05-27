@@ -61,6 +61,11 @@ class RLAgentNode(Node):
         self.declare_parameter('drive_front_speed_slow_distance', 1.5)
         self.declare_parameter('drive_front_speed_mid_limit', 1.3)
         self.declare_parameter('drive_front_speed_min_limit', 0.8)
+        self.declare_parameter('drive_wide_corridor_straighten_enabled', False)
+        self.declare_parameter('drive_wide_corridor_side_distance', 1.2)
+        self.declare_parameter('drive_wide_corridor_front_distance', 2.5)
+        self.declare_parameter('drive_wide_corridor_steering_scale', 0.35)
+        self.declare_parameter('drive_wide_corridor_max_steering', 0.06)
         self.declare_parameter('sb3_observation_layout', 'auto')
         self.declare_parameter('sb3_scan_beams', 2155)
         self.declare_parameter('sb3_lidar_max_range', 10.0)
@@ -145,6 +150,23 @@ class RLAgentNode(Node):
         self.drive_front_speed_min_limit = float(
             self.get_parameter('drive_front_speed_min_limit').value
         )
+        self.drive_wide_corridor_straighten_enabled = bool(
+            self.get_parameter('drive_wide_corridor_straighten_enabled').value
+        )
+        self.drive_wide_corridor_side_distance = float(
+            self.get_parameter('drive_wide_corridor_side_distance').value
+        )
+        self.drive_wide_corridor_front_distance = float(
+            self.get_parameter('drive_wide_corridor_front_distance').value
+        )
+        self.drive_wide_corridor_steering_scale = float(np.clip(
+            self.get_parameter('drive_wide_corridor_steering_scale').value,
+            0.0,
+            1.0
+        ))
+        self.drive_wide_corridor_max_steering = abs(float(
+            self.get_parameter('drive_wide_corridor_max_steering').value
+        ))
         self.sb3_observation_layout = self.get_parameter('sb3_observation_layout').value
         self.sb3_scan_beams = int(self.get_parameter('sb3_scan_beams').value)
         self.sb3_lidar_max_range = float(self.get_parameter('sb3_lidar_max_range').value)
@@ -289,7 +311,8 @@ class RLAgentNode(Node):
                 f'max_steering_delta={self.drive_max_steering_delta}, '
                 f'turn_speed_reduction={self.drive_turn_speed_reduction}, '
                 f'wall_guard_enabled={self.drive_wall_guard_enabled}, '
-                f'front_speed_scheduler_enabled={self.drive_front_speed_scheduler_enabled}'
+                f'front_speed_scheduler_enabled={self.drive_front_speed_scheduler_enabled}, '
+                f'wide_corridor_straighten_enabled={self.drive_wide_corridor_straighten_enabled}'
             )
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
@@ -636,6 +659,11 @@ class RLAgentNode(Node):
 
         return float(np.percentile(sector, 25))
 
+    def _open_space_distance(self, distance):
+        if distance is None:
+            return self.sb3_lidar_max_range
+        return distance
+
     def _apply_front_speed_scheduler(self, velocity):
         if not self.drive_front_speed_scheduler_enabled:
             return velocity
@@ -669,6 +697,37 @@ class RLAgentNode(Node):
             self.drive_max_speed
         ))
         return min(velocity, speed_limit)
+
+    def _apply_wide_corridor_straightener(self, steering):
+        if not self.drive_wide_corridor_straighten_enabled:
+            return steering
+
+        front_distance = self._open_space_distance(
+            self._scan_sector_distance(-20.0, 20.0)
+        )
+        left_distance = self._open_space_distance(
+            self._scan_sector_distance(55.0, 125.0)
+        )
+        right_distance = self._open_space_distance(
+            self._scan_sector_distance(-125.0, -55.0)
+        )
+
+        if front_distance < self.drive_wide_corridor_front_distance:
+            return steering
+        if left_distance < self.drive_wide_corridor_side_distance:
+            return steering
+        if right_distance < self.drive_wide_corridor_side_distance:
+            return steering
+
+        adjusted_steering = steering * self.drive_wide_corridor_steering_scale
+        if self.drive_wide_corridor_max_steering > 0.0:
+            adjusted_steering = float(np.clip(
+                adjusted_steering,
+                -self.drive_wide_corridor_max_steering,
+                self.drive_wide_corridor_max_steering
+            ))
+
+        return adjusted_steering
 
     def _apply_wall_guard(self, steering, velocity):
         if not self.drive_wall_guard_enabled or self.drive_wall_guard_distance <= 0.0:
@@ -731,6 +790,7 @@ class RLAgentNode(Node):
         target_steering = float(
             np.clip(target_steering, -self.drive_steering_limit, self.drive_steering_limit)
         )
+        target_steering = self._apply_wide_corridor_straightener(target_steering)
 
         target_speed = float(
             np.clip(velocity, self.drive_min_speed, self.drive_max_speed)
