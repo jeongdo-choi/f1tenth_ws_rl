@@ -1,22 +1,63 @@
 rl_agent:
   ros__parameters:
     # Training parameters
-    training_mode: true       # Set to false for deployment/testing
-    model_type: 'dqn'         # Options: 'dqn', 'ppo' (when implemented)
-    model_path: ''            # Path to saved model (empty for training from scratch)
+    training_mode: false      # Set to false for deployment/testing
+    model_type: 'sb3_ppo'    # Options: 'dqn', 'ppo', 'sb3_ppo'
+    model_path: '/home/meric/f1tenth_ws_rl/src/f1tenth_rl/best_model.zip'
     save_path: 'models/'      # Directory to save trained models
     
     # Environment parameters
+    state_dim: 1080           # Auto-overridden to match SB3 checkpoints when needed
     max_steps_per_episode: 1000
+
+    # Real-car SB3 deployment parameters
+    speed_odom_topic: '/odom' # Odometry topic used for speed/yaw/angular velocity features
+    sb3_observation_layout: 'auto' # auto, scan_speed, or rldd_frenet_scan
+    sb3_scan_beams: 2155      # rldd PPO training used 2155 lidar beams
+    sb3_lidar_max_range: 10.0 # rldd normalized clipped lidar ranges by 10m
+    sb3_reverse_scan: true    # Flip LaserScan left/right before feeding SB3 PPO
+    sb3_scan_speed_order: 'scan_first' # Restores the tested lidar-then-speed order
+    sb3_speed_scale: 3.2      # rldd linear_vel feature was speed / 3.2
+    sb3_default_pose_d: 0.0   # Fallback when no centerline CSV is configured
+    sb3_centerline_csv: ''    # Leave empty for map-free 2156-dim scan+speed models
+    sb3_centerline_x_col: 0   # If using a CSV: x,y,yaw
+    sb3_centerline_y_col: 1
+    sb3_centerline_yaw_col: 2
+    sb3_action_steering_limit: 0.32
+    sb3_action_min_speed: 0.5
+    sb3_action_max_speed: 4.0
+    drive_steering_limit: 0.32
+    drive_min_speed: 0.0
+    drive_max_speed: 2.50     # Faster test cap; front/wall/turn guards still reduce when needed
+    drive_steering_smoothing_alpha: 0.55 # Faster response with lower steering gain
+    drive_max_steering_delta: 0.10       # Avoid lag while still limiting sudden steering snaps
+    drive_turn_speed_reduction: 0.35     # Slow more only while steering hard
+    drive_wall_guard_enabled: true       # Prevent steering further into a close side wall
+    drive_wall_guard_distance: 0.50      # Guard starts earlier in medium-width corridors
+    drive_wall_guard_steering_bias: 0.035 # Gentle push away from the close wall
+    drive_wall_guard_max_toward_wall: 0.00 # Do not allow steering into a close wall
+    drive_wall_guard_speed_scale: 0.70   # Reduce speed while wall guard is active
+    drive_wall_guard_reverse_sides: false # Set true if left/right guard acts backward
+    drive_front_speed_scheduler_enabled: true # Limit speed from front free-space distance
+    drive_front_speed_sector_deg: 15.0    # Front sector half-angle for distance checks
+    drive_front_speed_clear_distance: 3.0 # Above this, allow drive_max_speed
+    drive_front_speed_slow_distance: 1.5  # Below this, use the minimum front speed limit
+    drive_front_speed_mid_limit: 1.3      # Speed cap when front distance is 1.5m-3.0m
+    drive_front_speed_min_limit: 0.8      # Speed cap when front distance is below 1.5m
+    drive_wide_corridor_straighten_enabled: true # Experiment: damp steering in open/medium corridors
+    drive_wide_corridor_side_distance: 0.75 # Activate around 2m-wide corridors when roughly centered
+    drive_wide_corridor_front_distance: 2.5 # Front sector must be at least this open
+    drive_wide_corridor_steering_scale: 0.30 # Keep this fraction of steering in open/medium corridors
+    drive_wide_corridor_max_steering: 0.05   # Absolute steering cap while straightener is active
     
-    # DQN parameters
+    # DQN/custom PPO parameters
     hidden_dim: 256
     learning_rate: 0.0001
     batch_size: 64
     gamma: 0.98              # Discount factor
     epsilon_start: 1.0       # Starting exploration rate
     epsilon_end: 0.05        # Minimum exploration rate
-    epsilon_decay: 0.99     # Decay rate for exploration
+    epsilon_decay: 0.99      # Decay rate for exploration
     
     # Reward components weights
     collision_penalty: -500.0

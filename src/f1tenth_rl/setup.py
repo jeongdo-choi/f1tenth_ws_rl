@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 import os
 from glob import glob
 
@@ -7,9 +7,12 @@ package_name = 'f1tenth_rl'
 setup(
     name=package_name,
     version='0.1.0',
-    packages=[package_name,   
-          package_name + '.models',  
-          package_name + '.utils'],
+    packages=[
+        package_name,
+        package_name + '.models',
+        package_name + '.utils',
+        'scripts',
+    ],
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -17,11 +20,14 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
-    install_requires=['setuptools',
-                      'numpy',
-                      'torch',
-                      'gym',
-                      'matplotlib'],
+    install_requires=[
+        'setuptools',
+        'numpy',
+        'torch',
+        'gym',
+        'matplotlib',
+        'stable-baselines3',
+    ],
     zip_safe=True,
     maintainer='Your Name',
     maintainer_email='your_email@example.com',

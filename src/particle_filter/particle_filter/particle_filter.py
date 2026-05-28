@@ -243,8 +243,8 @@ class ParticleFiler(Node):
         t = TransformStamped()
         # header
         t.header.stamp = stamp
-        t.header.frame_id = '/map'
-        t.child_frame_id = '/odom'
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'odom'
         # translation
         laser_to_base_x = 0.29  # 이 줄을 추가해야 합니다!  
         t.transform.translation.x = pose[0] - laser_to_base_x * np.cos(pose[2])
@@ -261,7 +261,7 @@ class ParticleFiler(Node):
         if self.PUBLISH_ODOM:
             odom = Odometry()
             odom.header.stamp = self.get_clock().now().to_msg()
-            odom.header.frame_id = '/map'
+            odom.header.frame_id = 'map'
             odom.pose.pose.position.x = pose[0]
             odom.pose.pose.position.y = pose[1]
             odom.pose.pose.orientation = Utils.angle_to_quaternion(pose[2])
@@ -283,7 +283,7 @@ class ParticleFiler(Node):
             # Publish the inferred pose for visualization
             ps = PoseStamped()
             ps.header.stamp = self.get_clock().now().to_msg()
-            ps.header.frame_id = '/map'
+            ps.header.frame_id = 'map'
             ps.pose.position.x = self.inferred_pose[0]
             ps.pose.position.y = self.inferred_pose[1]
             ps.pose.orientation = Utils.angle_to_quaternion(self.inferred_pose[2])
@@ -311,7 +311,7 @@ class ParticleFiler(Node):
         # publish the given particles as a PoseArray object
         pa = PoseArray()
         pa.header.stamp = self.get_clock().now().to_msg()
-        pa.header.frame_id = '/map'
+        pa.header.frame_id = 'map'
         pa.poses = Utils.particles_to_poses(particles)
         self.particle_pub.publish(pa)
 
@@ -319,7 +319,7 @@ class ParticleFiler(Node):
         # publish the given angels and ranges as a laser scan message
         ls = LaserScan()
         ls.header.stamp = self.last_stamp
-        ls.header.frame_id = '/laser'
+        ls.header.frame_id = 'laser'
         ls.angle_min = np.min(angles)
         ls.angle_max = np.max(angles)
         ls.angle_increment = np.abs(angles[0] - angles[1])
@@ -332,58 +332,20 @@ class ParticleFiler(Node):
         '''
         Initializes reused buffers, and stores the relevant laser scanner data for later use.
         '''
-        # =================================================================
-        # 1. 설정값
-        # =================================================================
-        MIN_RANGE = 0.15  # 15cm 이내 노이즈 제거 (가운데 초록점 제거용)
-        ANGLE_MIN = np.radians(110) # 사용 범위 시작 (뒤쪽 자르기용)
-        ANGLE_MAX = np.radians(250) # 사용 범위 끝 (뒤쪽 자르기용)
-        # 참고: S3 라이다 기준 0도가 뒤쪽이므로, 110~250도는 "앞쪽 부채꼴"을 의미
+        if not isinstance(self.laser_angles, np.ndarray):
+            self.get_logger().info('...Received first LiDAR message')
+            self.laser_angles = np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
+            self.downsampled_angles = np.copy(
+                self.laser_angles[0::self.ANGLE_STEP]
+            ).astype(np.float32)
+            self.viz_queries = np.zeros((self.downsampled_angles.shape[0], 3), dtype=np.float32)
+            self.viz_ranges = np.zeros(self.downsampled_angles.shape[0], dtype=np.float32)
+            self.get_logger().info(str(self.downsampled_angles.shape[0]))
 
-        # =================================================================
-        # 2. 데이터 전처리 (매 프레임 실행)
-        # =================================================================
-        # (1) 원본 데이터 가져오기
-        raw_ranges = np.array(msg.ranges)
-        
-        # (2) 각도 배열 생성 (한 번만 만들고 재활용해도 되지만 안전하게 매번 생성)
-        raw_angles = np.linspace(msg.angle_min, msg.angle_max, len(raw_ranges))
-
-        # (3) 다운샘플링 (일단 전체에서 뽑음)
-        sampled_ranges = raw_ranges[::self.ANGLE_STEP]
-        sampled_angles = raw_angles[::self.ANGLE_STEP]
-
-        # =================================================================
-        # 3. 필터링 (각도 & 거리 동시 적용)
-        # =================================================================
-        
-        # (A) 각도 마스크: 110도 ~ 250도 사이인 것만 True
-        mask_angle = (sampled_angles >= ANGLE_MIN) & (sampled_angles <= ANGLE_MAX)
-        
-        # (B) 거리 마스크: 15cm보다 먼 것만 True (가운데 점 제거 핵심!)
-        mask_dist = (sampled_ranges > MIN_RANGE)
-
-        # (C) 최종 마스크 (교집합)
-        final_mask = mask_angle & mask_dist
-
-        # =================================================================
-        # 4. 클래스 변수 업데이트 (여기가 중요!!!)
-        # =================================================================
-        # 반드시 self.downsampled_... 변수 자체를 덮어써야 함
-        self.downsampled_ranges = sampled_ranges[final_mask]
-        self.downsampled_angles = sampled_angles[final_mask]
-
-        # =================================================================
-        # 5. 시각화 및 버퍼 준비
-        # =================================================================
-        # 데이터 크기가 매번 바뀌므로 쿼리 버퍼도 크기에 맞춰 다시 잡아줘야 안전함
-        num_valid = self.downsampled_angles.shape[0]
-        
-        if num_valid > 0:
-            self.viz_queries = np.zeros((num_valid, 3), dtype=np.float32)
-            self.viz_ranges = np.zeros(num_valid, dtype=np.float32)
-        
-        # 초기화 플래그
+        self.downsampled_ranges = np.asarray(
+            msg.ranges[::self.ANGLE_STEP],
+            dtype=np.float32
+        )
         self.lidar_initialized = True
 
     def odomCB(self, msg):

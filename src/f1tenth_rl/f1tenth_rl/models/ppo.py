@@ -104,18 +104,32 @@ class PPOAgent:
         self.rewards = []
         self.values = []
         self.dones = []
+
+    def _state_tensor(self, state):
+        """Accept either numpy-like states or already batched tensors."""
+        if isinstance(state, torch.Tensor):
+            state_tensor = state.detach().float()
+        else:
+            state_tensor = torch.as_tensor(state, dtype=torch.float32)
+
+        if state_tensor.dim() == 1:
+            state_tensor = state_tensor.unsqueeze(0)
+        elif state_tensor.dim() > 2:
+            state_tensor = state_tensor.reshape(state_tensor.shape[0], -1)
+
+        return state_tensor
     
     def select_action(self, state, deterministic=False):
         """Select action from the policy"""
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = self._state_tensor(state)
             action, log_prob = self.actor_critic.get_action(state_tensor, deterministic)
             _, _, value = self.actor_critic(state_tensor)
         
         # Convert to numpy
-        action_np = action.squeeze(0).numpy()
-        log_prob_np = log_prob.squeeze(0).numpy()
-        value_np = value.squeeze(0).numpy()
+        action_np = action.squeeze(0).cpu().numpy()
+        log_prob_np = log_prob.squeeze(0).cpu().numpy()
+        value_np = value.squeeze(0).cpu().numpy()
         
         return action_np, log_prob_np, value_np
     
@@ -130,21 +144,30 @@ class PPOAgent:
     
     def train(self, next_value=0):
         """Train PPO agent using collected trajectories"""
+        if not self.states:
+            return 0.0
+
         # Convert lists to tensors
-        states = torch.FloatTensor(np.array(self.states))
-        actions = torch.FloatTensor(np.array(self.actions))
-        old_log_probs = torch.FloatTensor(np.array(self.log_probs))
-        rewards = torch.FloatTensor(np.array(self.rewards))
-        values = torch.FloatTensor(np.array(self.values))
-        dones = torch.FloatTensor(np.array(self.dones))
+        states = torch.as_tensor(np.array(self.states), dtype=torch.float32)
+        if states.dim() > 2:
+            states = states.reshape(states.shape[0], -1)
+
+        actions = torch.as_tensor(np.array(self.actions), dtype=torch.float32)
+        old_log_probs = torch.as_tensor(np.array(self.log_probs), dtype=torch.float32).reshape(-1, 1)
+        rewards = torch.as_tensor(np.array(self.rewards), dtype=torch.float32).reshape(-1)
+        values = torch.as_tensor(np.array(self.values), dtype=torch.float32).reshape(-1)
+        dones = torch.as_tensor(np.array(self.dones), dtype=torch.float32).reshape(-1)
+        next_value = torch.as_tensor(next_value, dtype=torch.float32).reshape(-1)[0]
         
         # Compute returns and advantages (Generalized Advantage Estimation)
         returns, advantages = self._compute_gae(rewards, values, dones, next_value)
+        advantages_for_policy = advantages.reshape(-1, 1)
         
         # PPO update (multiple epochs)
         for _ in range(10):  # Number of epochs
             # Forward pass through the network
             action_means, action_stds, values_pred = self.actor_critic(states)
+            values_pred = values_pred.squeeze(-1)
             
             # Calculate action log probabilities
             dist = Normal(action_means, action_stds)
@@ -157,8 +180,8 @@ class PPOAgent:
             ratio = torch.exp(new_log_probs - old_log_probs)
             
             # Calculate surrogate losses
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advantages
+            surr1 = ratio * advantages_for_policy
+            surr2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advantages_for_policy
             
             # Calculate actor loss (negative for gradient ascent)
             actor_loss = -torch.min(surr1, surr2).mean()
@@ -186,7 +209,7 @@ class PPOAgent:
         advantages = torch.zeros_like(rewards)
         
         # Last value if episode didn't end
-        last_gae_lam = 0
+        last_gae_lam = 0.0
         
         for t in reversed(range(len(rewards))):
             if t == len(rewards) - 1:
@@ -202,7 +225,8 @@ class PPOAgent:
             returns[t] = advantages[t] + values[t]
         
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        if len(advantages) > 1:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         return returns, advantages
     
