@@ -1,5 +1,11 @@
 # F1TENTH Reinforcement Learning Package
 
+> For this real-car handoff branch, start with [the workspace README](../../README.md)
+> and [the handoff guide](../../docs/HANDOFF.md). Use
+> `ros2 launch f1tenth_rl rl_drive_launch.py` for the packaged SB3 PPO model.
+> The training/simulator instructions below are retained for reference;
+> the simulator is not bundled in this driving workspace.
+
 A ROS2 package for training and deploying reinforcement learning agents in the F1TENTH simulator.
 
 ## Overview

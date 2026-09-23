@@ -11,3 +11,15 @@ videos/
 *.pyc
 __pycache__/
 *.egg-info/
+
+# Generated output; keep the nested Python models package tracked.
+/models/
+/drive_log/
+/pf_run/
+/rosbag2_*/
+/driving_log.txt
+/CMakeFiles/
+*.whl
+*.backup
+*.save
+.ipynb_checkpoints/

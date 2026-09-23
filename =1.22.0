@@ -1,7 +1,0 @@
-Defaulting to user installation because normal site-packages is not writeable
-Collecting numpy
-  Downloading numpy-1.24.4-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (5.6 kB)
-Downloading numpy-1.24.4-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (14.0 MB)
-   ━━━━━━━━━━━━ 14.0/14.0 MB 3.6 MB/s eta 0:00:00
-Installing collected packages: numpy
-Successfully installed numpy-1.24.4
