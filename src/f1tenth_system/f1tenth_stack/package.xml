@@ -16,6 +16,7 @@
   <depend>ackermann_mux</depend>
   <depend>std_msgs</depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>simple_teleop</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   

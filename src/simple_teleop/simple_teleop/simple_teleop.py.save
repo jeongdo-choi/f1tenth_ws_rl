@@ -1,7 +1,0 @@
-  GNU nano 4.8                              simple_teleop.py                                         
-simple_teleop_node = Node(
-    package='simple_teleop',
-    executable='simple_teleop.py',
-    name='simple_teleop'
-)
-
